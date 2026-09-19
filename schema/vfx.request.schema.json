@@ -13,19 +13,50 @@
       "additionalProperties": false,
       "required": ["kind", "element", "purpose"],
       "properties": {
-        "kind": {"type": "string"},
-        "element": {"type": "string"},
-        "purpose": {"type": "string"},
-        "intensity": {"type": "string"}
+        "kind": {
+          "type": "string",
+          "enum": ["impact", "lightning_strike", "cloud", "ground_telegraph", "projectile", "projectile_trail", "weapon_trail", "aura", "beam", "portal", "boss_ability"]
+        },
+        "element": {
+          "type": "string",
+          "enum": ["neutral", "fire", "lightning", "poison", "frost", "arcane", "shadow", "holy", "earth", "water"]
+        },
+        "purpose": {
+          "type": "string",
+          "enum": ["damage", "danger_warning", "healing", "buff", "debuff", "ambience", "travel", "cosmetic"]
+        },
+        "intensity": {
+          "type": "string",
+          "enum": ["subtle", "standard", "strong", "boss"]
+        }
       }
     },
-    "gameplay": {"type": "object", "additionalProperties": false},
+    "gameplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shape": {"type": "string", "enum": ["circle", "rectangle", "line", "point"]},
+        "radius_tiles": {"type": "number", "exclusiveMinimum": 0, "maximum": 64},
+        "width_tiles": {"type": "number", "exclusiveMinimum": 0, "maximum": 64},
+        "length_tiles": {"type": "number", "exclusiveMinimum": 0, "maximum": 64},
+        "source_height": {"type": "number", "exclusiveMinimum": 0, "maximum": 64},
+        "target_distance": {"type": "number", "exclusiveMinimum": 0, "maximum": 256},
+        "tell_ms": {"type": "number", "minimum": 50, "maximum": 15000},
+        "active_ms": {"type": "number", "minimum": 0, "maximum": 30000},
+        "duration_ms": {"type": "number", "minimum": 50, "maximum": 30000},
+        "loop": {"type": "boolean"},
+        "attachment": {"type": "string"}
+      }
+    },
     "context": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "target": {"type": "string"},
-        "usage": {"type": "string"}
+        "target": {"type": "string", "enum": ["standalone", "enigma", "generic"]},
+        "usage": {
+          "type": "string",
+          "enum": ["normal_combat", "boss_combat", "ground_telegraph", "ambient_world", "cinematic_preview"]
+        }
       }
     },
     "seed": {"type": "integer"}

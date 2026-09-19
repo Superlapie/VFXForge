@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .paths import resolve_contained_file
+
 
 POLICY_ROOT = Path(__file__).resolve().parents[2] / "policies"
 
@@ -27,9 +29,7 @@ def list_policies() -> list[str]:
 
 
 def load_policy(policy_id: str) -> dict[str, Any]:
-    path = POLICY_ROOT / f"{policy_id}.json"
-    if not path.exists():
-        raise FileNotFoundError(f"Unknown policy '{policy_id}'. Available: {', '.join(list_policies())}")
+    path = resolve_contained_file(POLICY_ROOT, policy_id, ".json")
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Policy file must contain a JSON object: {path}")
@@ -73,4 +73,9 @@ def policy_ceilings(policy: dict[str, Any], usage: str) -> dict[str, Any]:
         "max_texture_dimension": int(limits.get("max_texture_dimension", 1024)),
         "max_child_effect_depth": int(limits.get("max_child_effect_depth", 4)),
         "allowed_layer_types": list(limits.get("allowed_layer_types", policy.get("allowed_layer_types", []))),
+        "world_units_per_tile": float(limits.get("world_units_per_tile", policy.get("defaults", {}).get("world_units_per_tile", 1.0))),
     }
+
+
+def world_units_per_tile(policy: dict[str, Any]) -> float:
+    return float(policy.get("defaults", {}).get("world_units_per_tile", 1.0))

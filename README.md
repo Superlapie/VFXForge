@@ -56,6 +56,17 @@ Without installing the package, use `./bin/vfxforge` in place of `vfxforge`.
 
 ## Useful commands
 
+Service workflow (preferred for production effect generation):
+
+```bash
+vfxforge plan --request examples/requests/fire_impact.vfxrequest.json --policy default --json
+vfxforge forge --request examples/requests/boss_line_sweep.vfxrequest.json --policy enigma --workspace build/service --json
+vfxforge recipes list --json
+vfxforge policies show enigma --json
+```
+
+Expert/manual document editing:
+
 ```bash
 vfxforge create effects/arcane_impact.vfx.json --name "Arcane Impact" --duration 1.5
 vfxforge add-layer effects/arcane_impact.vfx.json --type particle --id sparks

@@ -567,6 +567,13 @@ def validate_document(
             "max_lights": policy_ceilings.get("max_lights", profile["max_lights"]),
             "max_draw_calls": policy_ceilings.get("max_draw_calls", profile["max_draw_calls"]),
             "max_layers": policy_ceilings.get("max_layers", profile["max_layers"]),
+            "max_transparent_layers": policy_ceilings.get("max_transparent_layers", 6),
+            "max_trail_segments": policy_ceilings.get("max_trail_segments", 24),
+            "max_beam_segments": policy_ceilings.get("max_beam_segments", 24),
+            "max_duration_sec": policy_ceilings.get("max_duration_sec", 30.0),
+            "max_texture_dimension": policy_ceilings.get("max_texture_dimension", 1024),
+            "max_child_effect_depth": policy_ceilings.get("max_child_effect_depth", 4),
+            "allowed_layer_types": policy_ceilings.get("allowed_layer_types", []),
         }
     budget_target = errors if strict else warnings
     if metrics["peak_particles_estimate"] > profile["max_particles"]:
@@ -577,6 +584,32 @@ def validate_document(
         budget_target.append(issue("warning" if not strict else "error", "DRAW_CALL_BUDGET_EXCEEDED", "layers", f"Estimated draw calls ({metrics['draw_calls_estimate']}) exceed {profile_name} budget ({int(profile['max_draw_calls'])})."))
     if metrics["layer_count"] > profile["max_layers"]:
         budget_target.append(issue("warning" if not strict else "error", "LAYER_BUDGET_EXCEEDED", "layers", f"Layer count ({metrics['layer_count']}) exceeds {profile_name} budget ({int(profile['max_layers'])})."))
+    if policy_ceilings and profile.get("max_transparent_layers") and metrics.get("overdraw_layers", 0) > profile["max_transparent_layers"]:
+        budget_target.append(issue("warning" if not strict else "error", "TRANSPARENT_LAYER_BUDGET_EXCEEDED", "layers", f"Transparent layers ({metrics['overdraw_layers']}) exceed policy limit ({profile['max_transparent_layers']})."))
+    if policy_ceilings and duration > float(profile.get("max_duration_sec", 30.0)):
+        budget_target.append(issue("warning" if not strict else "error", "DURATION_POLICY_EXCEEDED", "duration", f"Effect duration ({duration}) exceeds policy maximum ({profile['max_duration_sec']})."))
+    allowed_layer_types = profile.get("allowed_layer_types") if policy_ceilings else None
+    if strict and allowed_layer_types:
+        allowed = set(allowed_layer_types)
+        for index, layer in enumerate(layers):
+            if not isinstance(layer, dict):
+                continue
+            layer_type = layer.get("type")
+            if layer_type not in allowed:
+                errors.append(issue("error", "LAYER_TYPE_NOT_ALLOWED", f"layers[{index}].type", f"Layer type '{layer_type}' is not allowed by policy.", value=layer_type))
+    if strict and policy_ceilings:
+        for index, layer in enumerate(layers):
+            if not isinstance(layer, dict):
+                continue
+            properties = layer.get("properties", {})
+            if layer.get("type") == "trail" and isinstance(properties, dict):
+                segments = properties.get("segment_count")
+                if finite_number(segments) and float(segments) > profile["max_trail_segments"]:
+                    errors.append(issue("error", "TRAIL_SEGMENT_LIMIT", f"layers[{index}].properties.segment_count", f"Trail segments exceed policy limit ({profile['max_trail_segments']}).", value=segments))
+            if layer.get("type") == "beam" and isinstance(properties, dict):
+                segments = properties.get("segment_count")
+                if finite_number(segments) and float(segments) > profile["max_beam_segments"]:
+                    errors.append(issue("error", "BEAM_SEGMENT_LIMIT", f"layers[{index}].properties.segment_count", f"Beam segments exceed policy limit ({profile['max_beam_segments']}).", value=segments))
     if metrics["overdraw_layers"] >= 6:
         warnings.append(issue("warning", "OVERDRAW_RISK", "layers", f"{metrics['overdraw_layers']} transparent/additive layers may create heavy overdraw.", "Preview on target hardware and consolidate cards where possible."))
     if duration > 30.0:

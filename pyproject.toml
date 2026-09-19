@@ -17,6 +17,9 @@ vfxforge = "vfxforge.cli:main"
 [tool.setuptools.packages.find]
 include = ["vfxforge*"]
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

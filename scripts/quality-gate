@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 QUALITY_DIR="$ROOT/build/quality"
-mkdir -p "$QUALITY_DIR/previews" "$QUALITY_DIR/exports"
+mkdir -p "$QUALITY_DIR/previews" "$QUALITY_DIR/exports" "$QUALITY_DIR/service"
 export PYTHONPATH="$ROOT"
 
 GODOT_BIN="$(printenv VFXFORGE_GODOT 2>/dev/null || true)"
@@ -20,40 +20,76 @@ if [[ -n "$GODOT_BIN" ]]; then
   export VFXFORGE_GODOT="$GODOT_BIN"
 fi
 
-echo "[1/8] Python model, CLI, renderer, and service tests"
-python3 -m unittest tests.test_model tests.test_cli tests.test_renderer_export tests.test_service -v
+echo "[1/9] Python model, CLI, renderer, and service tests"
+python3 -m unittest tests.test_model tests.test_cli tests.test_renderer_export tests.test_service tests.test_service_hardening -v
 
-echo "[2/8] User-facing CLI, Godot export, and GUI E2E"
+echo "[2/9] User-facing CLI, Godot export, and GUI E2E"
 python3 -m unittest tests.test_user_e2e -v
 
-echo "[3/8] Batch schema validation"
+echo "[3/9] Batch schema validation"
 python3 -m vfxforge.cli validate "$ROOT/examples" --json > "$QUALITY_DIR/validate.json"
 
-echo "[4/8] Deterministic PNG previews"
+echo "[4/9] Deterministic PNG previews"
 python3 -m vfxforge.cli render-preview "$ROOT/examples" \
   --output "$QUALITY_DIR/previews" --time 0.6 --camera mmo --json > "$QUALITY_DIR/render.json"
 preview_count="$(find "$QUALITY_DIR/previews" -maxdepth 1 -type f -name '*.png' | wc -l)"
 test "$preview_count" -eq 8
 
 if [[ -n "$GODOT_BIN" ]]; then
-  echo "[5/8] Godot editor parse/startup smoke"
+  echo "[5/9] Godot editor parse/startup smoke"
   "$GODOT_BIN" --headless --editor --path "$ROOT" --quit > "$QUALITY_DIR/godot-editor.log" 2>&1
   "$GODOT_BIN" --headless --path "$ROOT" --quit-after 2 > "$QUALITY_DIR/godot-gui-startup.log" 2>&1
-  echo "[6/8] Godot export and clean-project smoke"
+  echo "[6/9] Godot export and clean-project smoke"
   python3 -m vfxforge.cli export "$ROOT/examples" --output "$QUALITY_DIR/exports" --json > "$QUALITY_DIR/export.json"
 else
-  echo "[5/8] Godot editor parse/startup smoke: SKIPPED (Godot 4.x not found)"
-  echo "[6/8] Godot export smoke: SKIPPED (Godot 4.x not found)"
+  echo "[5/9] Godot editor parse/startup smoke: SKIPPED (Godot 4.x not found)"
+  echo "[6/9] Godot export smoke: SKIPPED (Godot 4.x not found)"
   python3 -m vfxforge.cli export "$ROOT/examples" --output "$QUALITY_DIR/exports" --no-smoke-test --json > "$QUALITY_DIR/export.json"
 fi
 
 manifest_count="$(find "$QUALITY_DIR/exports" -name 'export_manifest.json' -type f | wc -l)"
 test "$manifest_count" -eq 8
 
-echo "[7/8] Service forge smoke (default policy)"
-python3 -m vfxforge.cli forge --request examples/requests/fire_impact.vfxrequest.json --policy default --workspace build/quality/service --no-export --json > "$QUALITY_DIR/forge.json"
+echo "[7/9] Service recipe/policy schema lint"
+python3 - <<'PY'
+import json
+from pathlib import Path
+root = Path('.')
+for pattern in ('recipes/*.json', 'policies/*.json'):
+    for path in sorted(root.glob(pattern)):
+        json.loads(path.read_text(encoding='utf-8'))
+print('recipe/policy JSON parse OK')
+PY
 
-echo "[8/8] Artifact checks"
+echo "[8/9] Service forge matrix"
+python3 -m vfxforge.cli forge --request examples/requests/fire_impact.vfxrequest.json --policy default --workspace "$QUALITY_DIR/service/default" --no-export --json > "$QUALITY_DIR/forge_fire.json"
+python3 -m vfxforge.cli forge --request examples/requests/boss_line_sweep.vfxrequest.json --policy enigma --workspace "$QUALITY_DIR/service/enigma" --no-export --json > "$QUALITY_DIR/forge_boss_no_export.json" || true
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+def load_cli(path):
+    payload = json.loads(Path(path).read_text(encoding='utf-8'))
+    return payload.get('data', payload)
+
+fire = load_cli('build/quality/forge_fire.json')
+boss = load_cli('build/quality/forge_boss_no_export.json')
+assert fire['production_ready'] is True, fire
+assert boss['production_ready'] is False, boss
+assert any(item.get('code') == 'PRODUCTION_EXPORT_NOT_RUN' for item in boss.get('review_reasons', [])), boss
+PY
+
+SERVICE_CASES=(
+  "lightning_strike.vfxrequest.json"
+  "poison_cloud.vfxrequest.json"
+  "ground_telegraph.vfxrequest.json"
+  "projectile_trail.vfxrequest.json"
+)
+for case in "${SERVICE_CASES[@]}"; do
+  python3 -m vfxforge.cli forge --request "examples/requests/$case" --policy default --workspace "$QUALITY_DIR/service/$case" --no-export --json > "$QUALITY_DIR/service/${case%.vfxrequest.json}.json"
+done
+
+echo "[9/9] Artifact checks"
 test -s "$QUALITY_DIR/validate.json"
 test -s "$QUALITY_DIR/render.json"
 test -s "$QUALITY_DIR/export.json"

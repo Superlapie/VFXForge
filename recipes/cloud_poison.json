@@ -8,13 +8,45 @@
     "intent.element": "poison"
   },
   "priority": 100,
-  "seed": 40391,
+  "seed": 51203,
+  "supported_gameplay": [
+    "gameplay.loop",
+    "gameplay.duration_ms",
+    "gameplay.active_ms"
+  ],
+  "consumed_gameplay": [
+    "gameplay.loop",
+    "gameplay.duration_ms",
+    "gameplay.active_ms"
+  ],
+  "layer_roles": [
+    {
+      "id": "ground_fog",
+      "required": true,
+      "correction_priority": 10
+    },
+    {
+      "id": "mist",
+      "required": true,
+      "correction_priority": 10
+    },
+    {
+      "id": "bubbles",
+      "required": false,
+      "correction_priority": 40
+    },
+    {
+      "id": "cloud_glow",
+      "required": false,
+      "correction_priority": 60
+    }
+  ],
   "document": {
     "schema_version": 1,
-    "name": "Fire Impact",
+    "name": "Poison Cloud",
     "duration": 3.0,
     "loop": true,
-    "seed": 40391,
+    "seed": 51203,
     "metadata": {
       "author": "",
       "description": "",
@@ -27,17 +59,19 @@
     ],
     "layers": [
       {
-        "name": "Scorch",
+        "id": "ground_fog",
+        "type": "decal",
+        "name": "Ground Fog",
         "enabled": true,
         "start": 0.0,
-        "duration": 1.35,
+        "duration": 3.0,
         "properties": {
           "texture": "",
           "size": [
-            2.2,
-            2.2
+            3.0,
+            3.0
           ],
-          "color": "#FF6A2E80",
+          "color": "#4FAF4A55",
           "height": 0.02,
           "fade": true,
           "rotate": 0.0
@@ -86,42 +120,42 @@
             "position": 1.0,
             "color": "#00000000"
           }
-        ],
-        "id": "scorch",
-        "type": "decal"
+        ]
       },
       {
-        "name": "Embers",
+        "id": "mist",
+        "type": "particle",
+        "name": "Poison Mist",
         "enabled": true,
         "start": 0.0,
-        "duration": 1.2,
+        "duration": 3.0,
         "properties": {
-          "amount": 88,
-          "one_shot": true,
-          "lifetime": 1.0,
-          "explosiveness": 0.8,
+          "amount": 96,
+          "one_shot": false,
+          "lifetime": 2.6,
+          "explosiveness": 0.6,
           "randomness": 0.15,
           "fixed_fps": 0,
           "local_coords": false,
-          "emission_shape": "cone",
+          "emission_shape": "sphere",
           "emission_box_extents": [
             0.25,
             0.25,
             0.25
           ],
-          "emission_radius": 0.5,
+          "emission_radius": 1.2,
           "emission_height": 0.1,
           "direction": [
             0.0,
             1.0,
             0.0
           ],
-          "spread": 48.0,
-          "initial_velocity_min": 1.8,
-          "initial_velocity_max": 3.8,
+          "spread": 35.0,
+          "initial_velocity_min": 0.5,
+          "initial_velocity_max": 2.0,
           "gravity": [
             0.0,
-            -2.0,
+            -1.5,
             0.0
           ],
           "damping": 0.0,
@@ -134,14 +168,14 @@
             0.0,
             0.0
           ],
-          "scale_min": 0.08,
-          "scale_max": 0.16,
+          "scale_min": 0.05,
+          "scale_max": 0.12,
           "rotation_min": 0.0,
           "rotation_max": 360.0,
           "angular_velocity_min": -90.0,
           "angular_velocity_max": 90.0,
           "texture": "",
-          "color": "#FF9A3CFF"
+          "color": "#7FD86AFF"
         },
         "material": {
           "blend_mode": "additive",
@@ -160,23 +194,6 @@
           "emissive_intensity": 1.0
         },
         "curves": {
-          "scale": {
-            "interpolation": "linear",
-            "points": [
-              {
-                "x": 0.0,
-                "y": 0.35
-              },
-              {
-                "x": 0.15,
-                "y": 1.0
-              },
-              {
-                "x": 1.0,
-                "y": 0.0
-              }
-            ]
-          },
           "alpha": {
             "interpolation": "linear",
             "points": [
@@ -189,25 +206,8 @@
                 "y": 1.0
               },
               {
-                "x": 0.75,
-                "y": 1.0
-              },
-              {
                 "x": 1.0,
                 "y": 0.0
-              }
-            ]
-          },
-          "velocity": {
-            "interpolation": "linear",
-            "points": [
-              {
-                "x": 0.0,
-                "y": 1.0
-              },
-              {
-                "x": 1.0,
-                "y": 0.2
               }
             ]
           }
@@ -221,31 +221,62 @@
             "position": 1.0,
             "color": "#00000000"
           }
-        ],
-        "id": "embers",
-        "type": "particle"
+        ]
       },
       {
-        "name": "Fireball",
+        "id": "bubbles",
+        "type": "particle",
+        "name": "Toxic Bubbles",
         "enabled": true,
         "start": 0.0,
-        "duration": 0.7,
+        "duration": 3.0,
         "properties": {
-          "texture": "",
-          "size": [
-            1.6,
-            1.6
+          "amount": 36,
+          "one_shot": false,
+          "lifetime": 1.8,
+          "explosiveness": 0.6,
+          "randomness": 0.15,
+          "fixed_fps": 0,
+          "local_coords": false,
+          "emission_shape": "sphere",
+          "emission_box_extents": [
+            0.25,
+            0.25,
+            0.25
           ],
-          "flipbook_columns": 1,
-          "flipbook_rows": 1,
-          "flipbook_frames": 1,
-          "flipbook_fps": 12.0,
-          "flipbook_loop": false,
-          "flipbook_start_frame": 0,
-          "random_start": false,
-          "billboard": "enabled",
-          "pixel_snap": false,
-          "color": "#FFB05CFF"
+          "emission_radius": 0.8,
+          "emission_height": 0.1,
+          "direction": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "spread": 35.0,
+          "initial_velocity_min": 0.5,
+          "initial_velocity_max": 2.0,
+          "gravity": [
+            0.0,
+            -1.5,
+            0.0
+          ],
+          "damping": 0.0,
+          "radial_accel": 0.0,
+          "tangential_accel": 0.0,
+          "turbulence": 0.0,
+          "attractor_strength": 0.0,
+          "attractor_position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale_min": 0.05,
+          "scale_max": 0.12,
+          "rotation_min": 0.0,
+          "rotation_max": 360.0,
+          "angular_velocity_min": -90.0,
+          "angular_velocity_max": 90.0,
+          "texture": "",
+          "color": "#A8FF7AFF"
         },
         "material": {
           "blend_mode": "additive",
@@ -264,15 +295,15 @@
           "emissive_intensity": 1.0
         },
         "curves": {
-          "scale": {
+          "alpha": {
             "interpolation": "linear",
             "points": [
               {
                 "x": 0.0,
-                "y": 0.5
+                "y": 0.0
               },
               {
-                "x": 0.15,
+                "x": 0.1,
                 "y": 1.0
               },
               {
@@ -291,19 +322,19 @@
             "position": 1.0,
             "color": "#00000000"
           }
-        ],
-        "id": "fireball",
-        "type": "sprite"
+        ]
       },
       {
-        "name": "Fire Light",
+        "id": "cloud_glow",
+        "type": "light",
+        "name": "Cloud Glow",
         "enabled": true,
         "start": 0.0,
-        "duration": 0.9,
+        "duration": 3.0,
         "properties": {
-          "color": "#FF6B2EFF",
-          "energy": 5.0,
-          "range": 4.0,
+          "color": "#66CC55AA",
+          "energy": 4.0,
+          "range": 5.0,
           "shadow_enabled": false,
           "fade": true
         },
@@ -332,12 +363,8 @@
                 "y": 0.0
               },
               {
-                "x": 0.12,
+                "x": 0.1,
                 "y": 1.0
-              },
-              {
-                "x": 0.7,
-                "y": 0.55
               },
               {
                 "x": 1.0,
@@ -355,9 +382,7 @@
             "position": 1.0,
             "color": "#00000000"
           }
-        ],
-        "id": "fire_light",
-        "type": "light"
+        ]
       }
     ],
     "dependencies": {
@@ -416,7 +441,7 @@
     },
     "export": {
       "godot_version": "4.x",
-      "folder_name": "fire_impact",
+      "folder_name": "effect",
       "include_metadata": true,
       "embed_document": true,
       "copy_textures": true,

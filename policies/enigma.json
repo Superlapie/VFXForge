@@ -4,6 +4,7 @@
   "description": "Conservative Enigma host-game policy. Values are authoring defaults pending hardware tuning.",
   "defaults": {
     "budget_profile": "Medium",
+    "world_units_per_tile": 1.5,
     "max_particles": 4000,
     "max_lights": 3,
     "max_draw_calls": 36,
@@ -51,7 +52,15 @@
     "particle", "mesh_particle", "sprite", "light", "trail", "beam", "decal",
     "mesh_effect", "audio_marker", "event_marker", "child_effect"
   ],
+  "semantic_bounds": {
+    "radius_tiles": {"min": 0.5, "max": 12},
+    "width_tiles": {"min": 0.5, "max": 12},
+    "length_tiles": {"min": 0.5, "max": 16},
+    "tell_ms": {"min": 100, "max": 5000}
+  },
   "require_godot_smoke": true,
+  "require_export_for_production": true,
+  "require_engine_validation": true,
   "runtime_gate": "host_project",
   "preview_cameras": ["mmo", "top"]
 }

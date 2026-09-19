@@ -5,9 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from ..schema import default_document
-from .policy import allowed_budget_profile
-from .request import TILE_SIZE, request_lookup_path
+from .policy import allowed_budget_profile, world_units_per_tile
+from .request import request_lookup_path
 
 
 def _set_path(document: dict[str, Any], dotted: str, value: Any) -> None:
@@ -32,12 +31,25 @@ def _scale_particle_amounts(document: dict[str, Any], factor: float) -> None:
             properties["amount"] = max(1, int(round(amount * factor)))
 
 
-def _apply_gameplay_scaling(document: dict[str, Any], request: dict[str, Any], recipe: dict[str, Any]) -> None:
+def _layer_ids(document: dict[str, Any]) -> set[str]:
+    return {str(layer.get("id")) for layer in document.get("layers", []) if isinstance(layer, dict) and layer.get("id")}
+
+
+def _remove_layers(document: dict[str, Any], layer_ids: set[str]) -> None:
+    if not layer_ids:
+        return
+    document["layers"] = [layer for layer in document.get("layers", []) if not isinstance(layer, dict) or str(layer.get("id")) not in layer_ids]
+
+
+def _apply_shape_scaling(document: dict[str, Any], request: dict[str, Any], recipe: dict[str, Any], tile_meters: float) -> None:
     gameplay = request.get("gameplay", {})
     scaling = recipe.get("gameplay_scaling", {})
     shape = gameplay.get("shape")
+    remove_for_shape = scaling.get("remove_layers_for_shape", {})
+    if isinstance(remove_for_shape, dict) and shape in remove_for_shape:
+        _remove_layers(document, set(remove_for_shape.get(shape, [])))
     if shape == "circle" and "radius_tiles" in gameplay:
-        radius = float(gameplay["radius_tiles"]) * TILE_SIZE
+        radius = float(gameplay["radius_tiles"]) * tile_meters
         size_factor = radius * 2.0
         target_layers = scaling.get("circle_size_layers", ["warning_circle", "circle"])
         for layer in document.get("layers", []):
@@ -49,36 +61,96 @@ def _apply_gameplay_scaling(document: dict[str, Any], request: dict[str, Any], r
             if "emission_radius" in properties:
                 properties["emission_radius"] = radius
     if shape == "rectangle" and "width_tiles" in gameplay and "length_tiles" in gameplay:
-        width = float(gameplay["width_tiles"]) * TILE_SIZE
-        length = float(gameplay["length_tiles"]) * TILE_SIZE
+        width = float(gameplay["width_tiles"]) * tile_meters
+        length = float(gameplay["length_tiles"]) * tile_meters
+        target_layers = scaling.get("rectangle_size_layers", ["warning_rect", "warning_circle"])
         for layer in document.get("layers", []):
-            if not isinstance(layer, dict):
+            if not isinstance(layer, dict) or layer.get("id") not in target_layers:
                 continue
             properties = layer.setdefault("properties", {})
             if layer.get("type") == "decal" and "size" in properties:
                 properties["size"] = [width, length]
     if shape == "line" and "length_tiles" in gameplay:
-        length = float(gameplay["length_tiles"]) * TILE_SIZE
-        width = float(gameplay.get("width_tiles", 1)) * TILE_SIZE
+        length = float(gameplay["length_tiles"]) * tile_meters
+        width = float(gameplay.get("width_tiles", 1)) * tile_meters
+        target_layers = scaling.get("line_size_layers", ["warning_line"])
         for layer in document.get("layers", []):
             if not isinstance(layer, dict):
                 continue
             properties = layer.setdefault("properties", {})
-            if layer.get("type") == "decal" and "size" in properties:
+            if layer.get("id") in target_layers and layer.get("type") == "decal" and "size" in properties:
                 properties["size"] = [width, length]
             if layer.get("type") == "beam":
                 properties["target"] = [0.0, 0.0, -length]
+                properties["thickness"] = max(width * 0.35, properties.get("thickness", 0.12))
+
+
+def _apply_tell_timing(document: dict[str, Any], request: dict[str, Any], recipe: dict[str, Any]) -> None:
+    gameplay = request.get("gameplay", {})
     tell_ms = gameplay.get("tell_ms")
-    if tell_ms is not None:
-        document["duration"] = max(float(tell_ms) / 1000.0, document.get("duration", 1.0))
-    active_ms = gameplay.get("active_ms")
-    if active_ms is not None and active_ms > 0:
-        document["duration"] = max(float(active_ms) / 1000.0, document.get("duration", 1.0))
-    duration_ms = gameplay.get("duration_ms")
-    if duration_ms is not None and duration_ms > 0:
-        document["duration"] = float(duration_ms) / 1000.0
+    if tell_ms is None:
+        active_ms = gameplay.get("active_ms")
+        duration_ms = gameplay.get("duration_ms")
+        if active_ms is not None:
+            document["duration"] = float(active_ms) / 1000.0
+        elif duration_ms is not None:
+            document["duration"] = float(duration_ms) / 1000.0
+        if "loop" in gameplay:
+            document["loop"] = bool(gameplay["loop"])
+        return
+    tell_sec = float(tell_ms) / 1000.0
+    timing = recipe.get("timing", {})
+    post_resolve = float(timing.get("post_resolve_sec", 0.0))
+    document["duration"] = tell_sec + post_resolve
+    resolve_event_id = str(timing.get("resolve_event_id", "damage_frame"))
+    warning_end = tell_sec
+    for layer in document.get("layers", []):
+        if not isinstance(layer, dict):
+            continue
+        if layer.get("type") == "event_marker":
+            continue
+        start = float(layer.get("start", 0.0))
+        if start >= warning_end:
+            layer["enabled"] = False
+            continue
+        layer["duration"] = max(0.001, warning_end - start)
+    events = document.setdefault("timeline", {}).setdefault("events", [])
+    matched = False
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event_id") in {resolve_event_id, "damage_frame", "resolve"}:
+            event["time"] = tell_sec
+            matched = True
+    if not matched:
+        events.append({"id": resolve_event_id, "event_id": resolve_event_id, "time": tell_sec, "data": {"presentation": True}})
+    events.sort(key=lambda item: float(item.get("time", 0.0)))
+    for layer in document.get("layers", []):
+        if not isinstance(layer, dict) or layer.get("type") != "event_marker":
+            continue
+        properties = layer.setdefault("properties", {})
+        marker_id = str(properties.get("event_id", layer.get("id", "resolve")))
+        if marker_id in {resolve_event_id, "damage_frame", "resolve", "impact"}:
+            layer["start"] = tell_sec
+            layer["duration"] = 0.001
     if "loop" in gameplay:
         document["loop"] = bool(gameplay["loop"])
+
+
+def _apply_loop_coverage(document: dict[str, Any], recipe: dict[str, Any]) -> None:
+    if not document.get("loop"):
+        return
+    duration = float(document.get("duration", 1.0))
+    for layer in document.get("layers", []):
+        if not isinstance(layer, dict) or not layer.get("enabled", True):
+            continue
+        if layer.get("type") in {"particle", "mesh_particle"}:
+            properties = layer.setdefault("properties", {})
+            properties["one_shot"] = False
+            properties["lifetime"] = max(float(properties.get("lifetime", 1.0)), duration * 0.85)
+            layer["duration"] = duration
+        elif layer.get("type") in {"decal", "mesh_effect", "sprite", "trail", "beam"}:
+            layer["duration"] = duration
 
 
 def compile_recipe(
@@ -105,7 +177,10 @@ def compile_recipe(
     scale_table = recipe.get("intensity_scale", {"subtle": 0.7, "standard": 1.0, "strong": 1.25, "boss": 1.5})
     factor = float(scale_table.get(intensity, 1.0))
     _scale_particle_amounts(document, factor)
-    _apply_gameplay_scaling(document, request, recipe)
+    tile_meters = world_units_per_tile(policy)
+    _apply_shape_scaling(document, request, recipe, tile_meters)
+    _apply_tell_timing(document, request, recipe)
+    _apply_loop_coverage(document, recipe)
     for binding in recipe.get("bindings", []):
         if not isinstance(binding, dict):
             continue

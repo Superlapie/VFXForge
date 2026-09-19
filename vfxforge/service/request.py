@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from ..model import is_stable_id
+from .paths import resolve_contained_file
 
 
 REQUEST_VERSION = 1
@@ -37,7 +38,16 @@ ALLOWED_GAMEPLAY_KEYS = frozenset({
 })
 ALLOWED_CONTEXT_KEYS = frozenset({"target", "usage"})
 
-TILE_SIZE = 1.0
+GAMEPLAY_BOUNDS = {
+    "radius_tiles": (0.25, 64.0),
+    "width_tiles": (0.25, 64.0),
+    "length_tiles": (0.25, 64.0),
+    "source_height": (0.1, 64.0),
+    "target_distance": (0.1, 256.0),
+    "tell_ms": (50.0, 15000.0),
+    "active_ms": (0.0, 30000.0),
+    "duration_ms": (50.0, 30000.0),
+}
 
 
 def _issue(code: str, path: str, message: str, value: Any = None) -> dict[str, Any]:
@@ -111,10 +121,20 @@ def validate_request(raw: Any) -> tuple[dict[str, Any] | None, list[dict[str, An
             value = gameplay.get(key)
             if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0):
                 errors.append(_issue("INVALID_GAMEPLAY_NUMBER", f"gameplay.{key}", f"{key} must be a positive number.", value))
+            elif value is not None and key in GAMEPLAY_BOUNDS:
+                minimum, maximum = GAMEPLAY_BOUNDS[key]
+                numeric = float(value)
+                if numeric < minimum or numeric > maximum:
+                    errors.append(_issue("SEMANTIC_OUT_OF_BOUNDS", f"gameplay.{key}", f"{key} must be between {minimum} and {maximum}.", value))
         for key in ("tell_ms", "active_ms", "duration_ms"):
             value = gameplay.get(key)
             if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0):
                 errors.append(_issue("INVALID_GAMEPLAY_TIMING", f"gameplay.{key}", f"{key} must be a non-negative number.", value))
+            elif value is not None and key in GAMEPLAY_BOUNDS:
+                minimum, maximum = GAMEPLAY_BOUNDS[key]
+                numeric = float(value)
+                if numeric < minimum or numeric > maximum:
+                    errors.append(_issue("SEMANTIC_OUT_OF_BOUNDS", f"gameplay.{key}", f"{key} must be between {minimum} and {maximum}.", value))
         loop = gameplay.get("loop")
         if loop is not None and not isinstance(loop, bool):
             errors.append(_issue("INVALID_GAMEPLAY_LOOP", "gameplay.loop", "loop must be boolean.", loop))

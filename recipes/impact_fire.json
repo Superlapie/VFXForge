@@ -429,5 +429,29 @@
     "standard": 1.0,
     "strong": 1.25,
     "boss": 1.5
-  }
+  },
+  "supported_gameplay": [],
+  "consumed_gameplay": [],
+  "layer_roles": [
+    {
+      "id": "scorch",
+      "required": false,
+      "correction_priority": 50
+    },
+    {
+      "id": "embers",
+      "required": true,
+      "correction_priority": 20
+    },
+    {
+      "id": "fireball",
+      "required": true,
+      "correction_priority": 10
+    },
+    {
+      "id": "fire_light",
+      "required": false,
+      "correction_priority": 60
+    }
+  ]
 }

@@ -1,6 +1,19 @@
 # AI workflow
 
-VFX Forge is designed for deterministic agent workflows. Keep the JSON document in version control and treat renders, exports, and manifests as derived review artifacts.
+VFX Forge is designed for deterministic agent workflows. For production effect generation, use the **semantic service path** first. Keep canonical JSON in version control and treat renders, exports, and manifests as derived review artifacts.
+
+## Primary path: semantic forge
+
+~~~
+vfxforge plan --request examples/requests/fire_impact.vfxrequest.json --policy default --json
+vfxforge forge --request examples/requests/fire_impact.vfxrequest.json --policy enigma --workspace build/service --json
+vfxforge recipes list --json
+vfxforge policies show enigma --json
+~~~
+
+The service accepts a versioned semantic request (`*.vfxrequest.json`), selects a recipe deterministically, compiles gameplay semantics into a canonical document, validates under policy ceilings, autocorrects only optional layers, renders previews, exports when the policy requires it, and promotes managed production output.
+
+Use `--policy enigma` for Enigma-target effects. That policy requires export and engine validation before `production_ready=true`. `--no-export` must not be treated as production-ready under Enigma policy.
 
 ## Discover first
 
@@ -10,9 +23,11 @@ vfxforge explain particle --json
 vfxforge schema --json
 ~~~
 
-The schema response describes layer types, default properties, enums, curves, gradients, and budget limits. Stable layer IDs are the preferred addressing mechanism.
+The schema response describes layer types, default properties, enums, curves, gradients, and budget limits. Stable layer IDs are the preferred addressing mechanism for expert/manual edits.
 
-## Inspect, edit, validate
+## Expert path: inspect, edit, validate
+
+Use this only for manual curation, debugging, or core tool development — not as the default AI production workflow.
 
 ~~~
 vfxforge inspect effect.vfx.json --json > before.json

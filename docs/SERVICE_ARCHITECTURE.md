@@ -39,9 +39,14 @@ Three-layer separation:
 
 - request validates
 - recipe resolves unambiguously
+- required gameplay semantics are present and consumed by the selected recipe
+- unsupported semantic parameters are rejected (`needs_review`)
 - strict validation passes (after optional correction)
-- export smoke passes when policy requires it (`policies/enigma.json`: `require_godot_smoke: true`)
-- promotion succeeds without effect-id conflict
+- export runs when policy requires it (`require_export_for_production`)
+- engine validation passes when policy requires it:
+  - standalone export → Godot standalone smoke
+  - library export → host-project library smoke
+- promotion succeeds without effect-id conflict inside a promotion lock
 
 Statuses: `ready`, `ready_corrected`, `needs_review`, `failed`
 
@@ -67,9 +72,11 @@ vfxforge export effect.vfx.json --output build/out --mode library --resource-roo
 
 VFX Forge does not import Enigma source. Enigma policy is data in `policies/enigma.json`.
 
-## Enigma adapter (implemented)
+## Enigma adapter (planned — not implemented in this repo)
 
-Enigma owns the thin integration layer:
+The Enigma-side adapter is the **next phase** and is intentionally not part of VFX Forge core/service yet. Do not document Enigma adapter files as completed until they exist in the Enigma repository.
+
+Planned Enigma-owned integration:
 
 | Path | Purpose |
 |------|---------|
@@ -79,16 +86,7 @@ Enigma owns the thin integration layer:
 | `content/vfx/requests/` | Semantic request fixtures |
 | `content/vfx/catalog.json` | Effect ID → scene path registry |
 | `client/generated/vfx/_runtime/` | Shared `vfx_runtime.gd` / `vfx_trail.gd` |
-| `client/presentation/vfx/vfx_catalog.gd` | Catalog loader (`PackagedIo`) |
+| `client/presentation/vfx/vfx_catalog.gd` | Catalog loader |
 | `client/presentation/vfx/vfx_spawner.gd` | `VfxSpawner.spawn(effect_id, parent, transform)` |
-| `client/tools/test_vfx_catalog.gd` | Headless host-project gate |
-| `toolchain.lock.json` | Pinned VFX Forge commit + override env |
-| `.cursor/rules/vfx-forge.mdc` | Agent workflow rule |
 
-Example:
-
-```bash
-cd Enigma
-scripts/generate-vfx.sh content/vfx/requests/fire_impact.vfxrequest.json
-scripts/verify-vfx.sh combat_fire_impact
-```
+VFX Forge provides the hardened service, library export, host-library smoke fixture, and Enigma policy data. Enigma will own the thin wrapper that calls `vfxforge forge --policy enigma` and installs promoted bundles.

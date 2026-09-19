@@ -14,6 +14,7 @@ from typing import Any
 
 from .errors import ExportError
 from .model import read_document
+from .service.paths import validate_resource_path
 from .validation import validate_document
 from .version import GODOT_TARGET, TOOL_VERSION
 
@@ -112,16 +113,32 @@ def _escaped_document_string(document: dict[str, Any]) -> str:
     return serialized.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
 
 
-def _write_generated_script(destination: Path, document: dict[str, Any], runtime_path: str = "res://vfx_runtime.gd") -> None:
+def _write_generated_script(
+    destination: Path,
+    document: dict[str, Any],
+    runtime_path: str = "res://vfx_runtime.gd",
+    asset_root: str | None = None,
+    trail_path: str | None = None,
+) -> None:
+    init_lines = [
+        '    var parsed: Variant = JSON.parse_string(DOCUMENT_JSON)',
+        "    if parsed is Dictionary:",
+    ]
+    if asset_root:
+        init_lines.insert(0, f'    set("runtime_script_path", "{runtime_path}")')
+        if trail_path:
+            init_lines.insert(1, f'    set("trail_script_path", "{trail_path}")')
+        init_lines.append(f'        set_document(parsed, "{asset_root}")')
+    else:
+        init_lines.append("        set_document(parsed)")
+    init_lines.append("        play()")
+    body = "\n".join(init_lines)
     script = f'''extends "{runtime_path}"
 
 const DOCUMENT_JSON: String = "{_escaped_document_string(document)}"
 
 func _ready() -> void:
-    var parsed: Variant = JSON.parse_string(DOCUMENT_JSON)
-    if parsed is Dictionary:
-        set_document(parsed)
-        play()
+{body}
 '''
     destination.write_text(script, encoding="utf-8")
 
@@ -279,6 +296,73 @@ def _run_godot_smoke(output: Path) -> dict[str, Any]:
     return {"status": "passed", "godot": command, "stdout": result.stdout[-1000:], "stderr": result.stderr[-1000:]}
 
 
+def _run_host_library_smoke(output: Path, resource_root: str, shared_runtime_path: str | None) -> dict[str, Any]:
+    command = _godot_command()
+    if command is None:
+        return {"status": "skipped", "reason": "Godot 4.x was not found on PATH for host library smoke."}
+    fixture_root = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "host_library"
+    if not fixture_root.exists():
+        return {"status": "skipped", "reason": "Host library fixture project is missing."}
+    validate_resource_path(resource_root, "resource_root")
+    if shared_runtime_path:
+        validate_resource_path(shared_runtime_path, "shared_runtime_path")
+    with tempfile.TemporaryDirectory(prefix="vfxforge-host-") as tmp:
+        host = Path(tmp) / "host"
+        shutil.copytree(fixture_root, host)
+        bundle_target = host / resource_root.removeprefix("res://")
+        bundle_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(output, bundle_target)
+        runtime_source = Path(__file__).resolve().parents[1] / "godot" / "runtime" / "vfx_runtime.gd"
+        trail_source = Path(__file__).resolve().parents[1] / "godot" / "runtime" / "vfx_trail.gd"
+        if shared_runtime_path:
+            shared_dir = host / shared_runtime_path.removeprefix("res://").rsplit("/", 1)[0]
+            shared_dir.mkdir(parents=True, exist_ok=True)
+            runtime_dst = shared_dir / "vfx_runtime.gd"
+            trail_dst = shared_dir / "vfx_trail.gd"
+            shutil.copy2(runtime_source, runtime_dst)
+            shutil.copy2(trail_source, trail_dst)
+            runtime_text = runtime_dst.read_text(encoding="utf-8").replace(
+                'trail_script_path: String = "res://godot/runtime/vfx_trail.gd"',
+                f'trail_script_path: String = "{shared_runtime_path.rsplit("/", 1)[0]}/vfx_trail.gd"',
+            )
+            runtime_dst.write_text(runtime_text, encoding="utf-8")
+        smoke_script = host / "host_smoke.gd"
+        smoke_script.write_text(
+            f'''extends SceneTree
+
+func _initialize() -> void:
+    var scene := load("{resource_root}/effect.tscn")
+    if scene == null:
+        push_error("HOST_LIBRARY_SMOKE missing scene")
+        quit(2)
+        return
+    var instance := (scene as PackedScene).instantiate()
+    if instance == null:
+        push_error("HOST_LIBRARY_SMOKE instantiate failed")
+        quit(3)
+        return
+    root.add_child(instance)
+    print("PASS host library smoke")
+    quit(0)
+''',
+            encoding="utf-8",
+        )
+        try:
+            result = subprocess.run(
+                [command, "--headless", "--path", str(host), "--script", "res://host_smoke.gd"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"status": "failed", "reason": str(exc)}
+        combined = f"{result.stdout}\n{result.stderr}"
+        if result.returncode != 0 or "HOST_LIBRARY_SMOKE" in combined or "ERROR:" in combined:
+            return {"status": "failed", "returncode": result.returncode, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:]}
+        return {"status": "passed", "godot": command, "resource_root": resource_root}
+
+
 def export_document(
     document: dict[str, Any],
     source_path: str | Path,
@@ -385,17 +469,37 @@ def export_document(
     if mode not in {"standalone", "library"}:
         raise ExportError(f"Unsupported export mode '{mode}'.", "INVALID_EXPORT_MODE", mode)
     root_prefix = resource_root.rstrip("/") if resource_root else None
-    if mode == "library" and not root_prefix:
-        root_prefix = "res://generated/vfx/" + str(document.get("id", "effect"))
+    if mode == "library":
+        if not root_prefix:
+            root_prefix = "res://generated/vfx/" + str(document.get("id", "effect"))
+        validate_resource_path(root_prefix, "resource_root")
+        if shared_runtime_path:
+            validate_resource_path(shared_runtime_path, "shared_runtime_path")
     runtime_script = shared_runtime_path or (f"{root_prefix}/vfx_runtime.gd" if mode == "library" else "res://vfx_runtime.gd")
+    trail_script = None
+    if mode == "library":
+        if shared_runtime_path:
+            trail_script = shared_runtime_path.rsplit("/", 1)[0] + "/vfx_trail.gd"
+        else:
+            trail_script = f"{root_prefix}/godot/runtime/vfx_trail.gd"
     effect_script_path = f"{root_prefix}/effect.gd" if mode == "library" and root_prefix else "res://effect.gd"
-    if mode == "standalone" or shared_runtime_path is None:
+    if mode == "standalone" or (mode == "library" and shared_runtime_path is None):
         shutil.copy2(runtime_source, destination / "vfx_runtime.gd")
-    trail_destination = destination / "godot" / "runtime"
     if mode == "standalone":
+        trail_destination = destination / "godot" / "runtime"
         trail_destination.mkdir(parents=True, exist_ok=True)
         shutil.copy2(trail_source, trail_destination / "vfx_trail.gd")
-    _write_generated_script(destination / "effect.gd", exported_document, runtime_script)
+    elif mode == "library" and shared_runtime_path is None:
+        trail_destination = destination / "godot" / "runtime"
+        trail_destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(trail_source, trail_destination / "vfx_trail.gd")
+    _write_generated_script(
+        destination / "effect.gd",
+        exported_document,
+        runtime_script,
+        asset_root=root_prefix if mode == "library" else None,
+        trail_path=trail_script,
+    )
     _write_tscn(destination / "effect.tscn", effect_script_path)
     if mode == "standalone":
         _write_project_file(destination / "project.godot")
@@ -435,7 +539,12 @@ void fragment() {
             encoding="utf-8",
         )
     (destination / "document.vfx.json").write_text(json.dumps(exported_document, indent=2) + "\n", encoding="utf-8")
-    smoke = _run_godot_smoke(destination) if run_smoke_test and mode == "standalone" else {"status": "not_requested" if not run_smoke_test else "skipped", "reason": "Library export smoke requires host-project fixture."}
+    smoke = {"status": "not_requested"}
+    host_smoke: dict[str, Any] = {"status": "not_requested"}
+    if run_smoke_test and mode == "standalone":
+        smoke = _run_godot_smoke(destination)
+    elif run_smoke_test and mode == "library":
+        host_smoke = _run_host_library_smoke(destination, root_prefix or "", shared_runtime_path)
     files = _manifest(destination)
     manifest = {
         "manifest_version": 1,
@@ -447,12 +556,14 @@ void fragment() {
         "export_mode": mode,
         "resource_root": root_prefix,
         "runtime_script": runtime_script,
+        "trail_script": trail_script,
         "files": files,
         "copied_textures": copied_files,
         "copied_meshes": copied_meshes,
         "copied_effects": copied_effects,
         "validation": validation,
         "smoke_test": smoke,
+        "host_smoke_test": host_smoke,
     }
     (destination / "export_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return {
@@ -462,11 +573,13 @@ void fragment() {
         "export_mode": mode,
         "resource_root": root_prefix,
         "runtime_script": runtime_script,
+        "trail_script": trail_script,
         "copied_textures": copied_files,
         "copied_meshes": copied_meshes,
         "copied_effects": copied_effects,
         "validation": validation,
         "smoke_test": smoke,
+        "host_smoke_test": host_smoke,
         "files": files,
     }
 

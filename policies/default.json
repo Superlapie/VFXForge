@@ -4,6 +4,7 @@
   "description": "Conservative default production policy for standalone VFX Forge exports.",
   "defaults": {
     "budget_profile": "Medium",
+    "world_units_per_tile": 1.0,
     "max_particles": 5000,
     "max_lights": 4,
     "max_draw_calls": 48,

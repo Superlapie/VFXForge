@@ -2,6 +2,21 @@
 
 VFX Forge is an offline Godot 4.x VFX authoring application. It is deliberately constrained to game-ready real-time effects rather than being a general-purpose DCC or shader IDE.
 
+## Primary AI workflow (service)
+
+For AI and content-generation agents, the **primary production workflow** is semantic intent through the service layer:
+
+~~~
+vfxforge plan --request content/effects/my_effect.vfxrequest.json --policy enigma --json
+vfxforge forge --request content/effects/my_effect.vfxrequest.json --policy enigma --workspace build/service --json
+~~~
+
+Use `vfxforge recipes list --json` and `vfxforge policies show enigma --json` to discover supported intent, gameplay semantics, and production gates. The service selects a recipe, compiles gameplay semantics (tile scale, tell timing, shape geometry), validates strictly, optionally autocorrects within policy bounds, renders a preview suite, exports when required, and promotes managed production output.
+
+**Do not** hand-author `.vfx.json` layer graphs for normal production requests. **Do not** return `production_ready` when required semantics were ignored or verification was skipped.
+
+Low-level document mutation (`set`, `add-layer`, `update-layer`, `add-event`) remains available for expert debugging, manual curation, and core development — not as the default agent workflow.
+
 ## Source of truth
 
 The canonical source is a *.vfx.json document. GUI state is not authoritative. Python model code normalizes/migrates documents, the CLI mutates them, and the Godot editor loads the same JSON through godot/model/vfx_document.gd.
@@ -15,7 +30,7 @@ layers.sparks.amount=64
 layers.sparks.properties.gravity=[0,-4,0]
 ~~~
 
-For direct mutation, prefer vfxforge set, vfxforge add-layer, vfxforge update-layer, and vfxforge add-event. Do not use ad-hoc JSON text replacement.
+For expert/manual document editing only, prefer vfxforge set, vfxforge add-layer, vfxforge update-layer, and vfxforge add-event. Do not use ad-hoc JSON text replacement.
 
 Use `vfxforge add-texture` and `vfxforge add-mesh` to ingest project assets. Mesh references are project-relative `.obj`, `.glb`, or `.gltf` paths, normally stored in `dependencies.meshes` and on `mesh_particle`/`mesh_effect` as `properties.mesh_asset`.
 

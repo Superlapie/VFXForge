@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vfxforge.local/schema/vfx.policy.schema.json",
+  "title": "VFX Forge Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["policy_id", "policy_version", "defaults"],
+  "properties": {
+    "policy_id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,63}$"},
+    "policy_version": {"type": "integer", "minimum": 1},
+    "description": {"type": "string"},
+    "defaults": {"type": "object"},
+    "contexts": {"type": "object"},
+    "allowed_layer_types": {"type": "array", "items": {"type": "string"}},
+    "semantic_bounds": {"type": "object"},
+    "require_godot_smoke": {"type": "boolean"},
+    "require_export_for_production": {"type": "boolean"},
+    "require_engine_validation": {"type": "boolean"},
+    "runtime_gate": {"type": "string"},
+    "preview_cameras": {"type": "array", "items": {"type": "string"}}
+  }
+}

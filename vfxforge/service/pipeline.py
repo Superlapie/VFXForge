@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -14,16 +13,43 @@ from .compiler import compile_recipe
 from .policy import allowed_budget_profile, load_policy, policy_ceilings, policy_ref
 from .preview_suite import render_preview_suite
 from .promotion import (
-    check_promotion_conflict,
     create_job_workspace,
-    production_dir,
+    generation_digest,
     promote_candidate,
+    production_dir,
     request_hash,
 )
 from .provenance import build_provenance, write_manifest
 from .request import normalize_request, validate_request
 from .result import ForgeStatus, make_result
 from .selector import recipe_ref, select_recipe
+from .semantic import validate_recipe_semantics
+
+
+def _policy_requires_export(policy: dict[str, Any]) -> bool:
+    return bool(policy.get("require_export_for_production", policy.get("require_godot_smoke", False)))
+
+
+def _policy_requires_engine(policy: dict[str, Any]) -> bool:
+    return bool(policy.get("require_engine_validation", policy.get("require_godot_smoke", False)))
+
+
+def _engine_gate_result(export_mode: str, export_result: dict[str, Any] | None) -> tuple[bool, dict[str, Any], str | None]:
+    if export_result is None:
+        return False, {}, "REQUIRED_HOST_VALIDATION_UNAVAILABLE"
+    if export_mode == "standalone":
+        smoke = export_result.get("smoke_test", {})
+        if smoke.get("status") == "passed":
+            return True, smoke, None
+        if smoke.get("status") == "skipped":
+            return False, smoke, "REQUIRED_ENGINE_VALIDATION_UNAVAILABLE"
+        return False, smoke, "EXPORT_SMOKE_FAILED"
+    host_smoke = export_result.get("host_smoke_test", {})
+    if host_smoke.get("status") == "passed":
+        return True, host_smoke, None
+    if host_smoke.get("status") == "skipped":
+        return False, host_smoke, "REQUIRED_HOST_VALIDATION_UNAVAILABLE"
+    return False, host_smoke, "HOST_LIBRARY_SMOKE_FAILED"
 
 
 def plan(raw_request: dict[str, Any], policy_id: str = "default") -> dict[str, Any]:
@@ -33,6 +59,8 @@ def plan(raw_request: dict[str, Any], policy_id: str = "default") -> dict[str, A
     normalized = normalize_request(document)
     policy = load_policy(policy_id)
     recipe, matches, review = select_recipe(normalized)
+    if recipe:
+        review = review + validate_recipe_semantics(normalized, recipe, policy)
     usage = normalized.get("context", {}).get("usage", "normal_combat")
     return {
         "plan_version": 1,
@@ -65,7 +93,6 @@ def forge(
         return make_result(ForgeStatus.FAILED, effect_id, errors=errors)
     normalized = normalize_request(document)
     effect_id = normalized["effect_id"]
-    req_hash = request_hash(normalized)
     policy = load_policy(policy_id)
     recipe, _, review = select_recipe(normalized)
     if review:
@@ -73,18 +100,28 @@ def forge(
         return make_result(status, effect_id, policy=policy_ref(policy_id), review_reasons=review, errors=review)
     if recipe is None:
         return make_result(ForgeStatus.NEEDS_REVIEW, effect_id, policy=policy_ref(policy_id), review_reasons=[{"code": "UNSUPPORTED_INTENT", "message": "No recipe selected."}])
+    semantic_review = validate_recipe_semantics(normalized, recipe, policy)
+    if semantic_review:
+        return make_result(ForgeStatus.NEEDS_REVIEW, effect_id, policy=policy_ref(policy_id), recipe=recipe_ref(recipe), review_reasons=semantic_review)
     if dry_run:
         return plan(raw_request, policy_id)
+    if _policy_requires_export(policy) and not export:
+        return make_result(
+            ForgeStatus.NEEDS_REVIEW,
+            effect_id,
+            policy=policy_ref(policy_id),
+            recipe=recipe_ref(recipe),
+            review_reasons=[{"code": "PRODUCTION_EXPORT_NOT_RUN", "message": "Policy requires export before production readiness."}],
+        )
 
+    gen_digest = generation_digest(normalized, recipe, policy)
     workspace_path = Path(workspace).resolve()
-    job = create_job_workspace(workspace_path, effect_id, req_hash)
-    job_id = job.name
+    job, job_id = create_job_workspace(workspace_path, effect_id, gen_digest)
     candidate_doc_path = job / "candidate" / f"{effect_id}.vfx.json"
     compiled = compile_recipe(normalized, recipe, policy)
     usage = normalized.get("context", {}).get("usage", "normal_combat")
     ceilings = policy_ceilings(policy, usage)
-    validation = validate_document(compiled, strict=True, policy_ceilings=ceilings, selected_budget=allowed_budget_profile(policy, usage))
-    corrected, corrections, correction_review = autocorrect_document(compiled, policy, usage, normalized)
+    corrected, corrections, correction_review = autocorrect_document(compiled, policy, usage, normalized, recipe)
     if correction_review:
         return make_result(
             ForgeStatus.NEEDS_REVIEW,
@@ -131,13 +168,10 @@ def forge(
                 resource_root=resource_root,
                 shared_runtime_path=shared_runtime_path,
             )
-            smoke = export_result.get("smoke_test", {})
-            runtime_validation = smoke
-            require_smoke = bool(policy.get("require_godot_smoke", False)) and export_mode == "standalone"
-            if require_smoke and smoke.get("status") != "passed":
-                code = "REQUIRED_ENGINE_VALIDATION_UNAVAILABLE" if smoke.get("status") == "skipped" else "EXPORT_SMOKE_FAILED"
+            passed, runtime_validation, gate_code = _engine_gate_result(export_mode, export_result)
+            if _policy_requires_engine(policy) and not passed:
                 return make_result(
-                    ForgeStatus.NEEDS_REVIEW if smoke.get("status") == "skipped" else ForgeStatus.FAILED,
+                    ForgeStatus.NEEDS_REVIEW if gate_code == "REQUIRED_HOST_VALIDATION_UNAVAILABLE" else ForgeStatus.FAILED,
                     effect_id,
                     job_id=job_id,
                     recipe=recipe_ref(recipe),
@@ -149,7 +183,7 @@ def forge(
                     previews=previews,
                     runtime_validation=runtime_validation,
                     export_validation=export_result,
-                    review_reasons=[{"code": code, "message": "Godot runtime validation did not pass.", "smoke_test": smoke}],
+                    review_reasons=[{"code": gate_code, "message": "Required engine validation did not pass.", "runtime_validation": runtime_validation}],
                 )
         except Exception as exc:
             return make_result(
@@ -161,8 +195,38 @@ def forge(
                 errors=[{"code": "EXPORT_FAILED", "message": str(exc)}],
             )
     production = production_dir(workspace_path, effect_id)
-    conflict = check_promotion_conflict(production, req_hash, allow_replace)
-    if conflict:
+    provenance_payload = build_provenance(
+        normalized,
+        request_hash(normalized),
+        gen_digest,
+        recipe,
+        policy,
+        int(corrected.get("seed", 0)),
+        corrections,
+        revalidation,
+        previews,
+        export_result,
+        export_mode=export_mode,
+        resource_root=resource_root,
+        shared_runtime_path=shared_runtime_path,
+    )
+    manifest_path = job / "forge_manifest.json"
+    write_manifest(manifest_path, provenance_payload)
+    promotion_metadata = {
+        "request_hash": request_hash(normalized),
+        "generation_digest": gen_digest,
+        "effect_id": effect_id,
+        "recipe_id": recipe.get("recipe_id"),
+        "policy_id": policy.get("policy_id", policy_id),
+        "job_id": job_id,
+        "allow_replace": allow_replace,
+    }
+    try:
+        if export and export_result:
+            promote_candidate(job / "candidate" / "export", production, promotion_metadata, manifest_path)
+        else:
+            promote_candidate(job / "candidate", production, promotion_metadata, manifest_path)
+    except RuntimeError as exc:
         return make_result(
             ForgeStatus.NEEDS_REVIEW,
             effect_id,
@@ -173,27 +237,9 @@ def forge(
             corrections=corrections,
             validation=revalidation,
             previews=previews,
-            review_reasons=[conflict],
+            review_reasons=[{"code": "EFFECT_ID_CONFLICT", "message": str(exc)}],
             artifacts={"candidate_document": str(candidate_doc_path), "job_workspace": str(job)},
         )
-    promoted_from = job / "candidate" / "export" if export else job / "candidate"
-    provenance_payload = build_provenance(
-        normalized,
-        req_hash,
-        recipe,
-        policy,
-        int(corrected.get("seed", 0)),
-        corrections,
-        revalidation,
-        previews,
-        export_result,
-    )
-    manifest_path = job / "forge_manifest.json"
-    write_manifest(manifest_path, provenance_payload)
-    if export and export_result:
-        promote_candidate(job / "candidate" / "export", production, {"request_hash": req_hash, "effect_id": effect_id, "recipe_id": recipe.get("recipe_id")})
-    else:
-        promote_candidate(job / "candidate", production, {"request_hash": req_hash, "effect_id": effect_id, "recipe_id": recipe.get("recipe_id")})
     status = ForgeStatus.READY_CORRECTED if corrections else ForgeStatus.READY
     return make_result(
         status,
@@ -213,6 +259,7 @@ def forge(
             "manifest": str(manifest_path),
             "production": str(production),
             "preview_manifest": previews.get("manifest"),
+            "contact_sheet": previews.get("contact_sheet"),
         },
         hashes=provenance_payload.get("hashes", {}),
         reproduction=provenance_payload.get("reproduction", {}),

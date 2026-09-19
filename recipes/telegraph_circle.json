@@ -341,6 +341,43 @@
   "gameplay_scaling": {
     "circle_size_layers": [
       "warning_circle"
-    ]
-  }
+    ],
+    "remove_layers_for_shape": {
+      "circle": [
+        "warning_line",
+        "warning_rect"
+      ]
+    }
+  },
+  "required_gameplay": [
+    "gameplay.shape",
+    "gameplay.radius_tiles",
+    "gameplay.tell_ms"
+  ],
+  "supported_gameplay": [
+    "gameplay.shape",
+    "gameplay.radius_tiles",
+    "gameplay.tell_ms"
+  ],
+  "consumed_gameplay": [
+    "gameplay.shape",
+    "gameplay.radius_tiles",
+    "gameplay.tell_ms"
+  ],
+  "timing": {
+    "post_resolve_sec": 0.15,
+    "resolve_event_id": "resolve"
+  },
+  "layer_roles": [
+    {
+      "id": "warning_circle",
+      "required": true,
+      "correction_priority": 5
+    },
+    {
+      "id": "resolve_marker",
+      "required": true,
+      "correction_priority": 1
+    }
+  ]
 }
