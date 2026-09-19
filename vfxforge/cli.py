@@ -16,6 +16,11 @@ from .model import add_layer, get_path, migrate_document, parse_value, read_docu
 from .presets import list_presets, make_preset
 from .renderer import render_preview
 from .schema import LAYER_TYPES, MESH_ASSET_EXTENSIONS, schema_description, default_document
+from .service.pipeline import forge, plan
+from .service.policy import list_policies, load_policy, policy_ref
+from .service.promotion import is_managed_document
+from .service.result import exit_code_for
+from .service.selector import list_recipes, load_recipe, recipe_ref
 from .validation import iter_vfx_files, validate_document, validation_summary
 from .version import GODOT_TARGET, SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION
 
@@ -110,6 +115,9 @@ def _parser() -> CLIParser:
     export.add_argument("--output", required=True)
     export.add_argument("--no-smoke-test", action="store_true")
     export.add_argument("--recursive", action="store_true")
+    export.add_argument("--mode", choices=["standalone", "library"], default="standalone")
+    export.add_argument("--resource-root", default=None)
+    export.add_argument("--shared-runtime", default=None)
 
     migrate = sub.add_parser("migrate", help="Normalize documents to the current schema.")
     migrate.add_argument("target")
@@ -131,6 +139,31 @@ def _parser() -> CLIParser:
     preset.add_argument("name", nargs="?")
     preset.add_argument("--output", default=None)
     preset.add_argument("--force", action="store_true")
+
+    forge_cmd = sub.add_parser("forge", help="Generate production-ready VFX from a semantic request.")
+    forge_cmd.add_argument("--request", required=True, help="Path to request JSON or '-' for stdin.")
+    forge_cmd.add_argument("--policy", default="default")
+    forge_cmd.add_argument("--workspace", default="build/service")
+    forge_cmd.add_argument("--no-export", action="store_true")
+    forge_cmd.add_argument("--export-mode", choices=["standalone", "library"], default="standalone")
+    forge_cmd.add_argument("--resource-root", default=None)
+    forge_cmd.add_argument("--shared-runtime", default=None, help="Shared runtime script path for library export.")
+    forge_cmd.add_argument("--allow-replace", action="store_true")
+
+    plan_cmd = sub.add_parser("plan", help="Resolve recipe and mappings without promoting assets.")
+    plan_cmd.add_argument("--request", required=True)
+    plan_cmd.add_argument("--policy", default="default")
+
+    recipes = sub.add_parser("recipes", help="List or show data-only recipes.")
+    recipes.add_argument("action", choices=["list", "show"])
+    recipes.add_argument("name", nargs="?")
+
+    policies = sub.add_parser("policies", help="List or show service policies.")
+    policies.add_argument("action", choices=["list", "show"])
+    policies.add_argument("name", nargs="?")
+
+    for mutating in (add, remove, update, set_command, texture, mesh, event):
+        mutating.add_argument("--unsafe-direct-edit", action="store_true", help="Allow mutation of service-managed production documents.")
     return parser
 
 
@@ -157,7 +190,13 @@ def _assignments(values: list[str]) -> list[tuple[str, Any]]:
     return parsed
 
 
-def _commit(path: Path, document: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _commit(path: Path, document: dict[str, Any], unsafe_direct_edit: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+    if is_managed_document(path) and not unsafe_direct_edit:
+        raise VFXForgeError(
+            f"Refusing to mutate service-managed document: {path}. Use forge or --unsafe-direct-edit.",
+            "MANAGED_DOCUMENT",
+            str(path),
+        )
     validation = validate_document(document, path.parent)
     if not validation["valid"]:
         return validation, document
@@ -269,7 +308,7 @@ def _cmd_mutate(args: argparse.Namespace, mutation: Callable[[dict[str, Any]], A
     path = Path(args.path)
     document = read_document(path)
     mutation(document)
-    validation, _ = _commit(path, document)
+    validation, _ = _commit(path, document, getattr(args, "unsafe_direct_edit", False))
     result = _envelope(args.command)
     result["warnings"] = validation["warnings"]
     result["errors"] = validation["errors"]
@@ -320,7 +359,7 @@ def _cmd_add_texture(args: argparse.Namespace) -> dict[str, Any]:
     refs = document.setdefault("dependencies", {}).setdefault("textures", [])
     if reference not in refs:
         refs.append(reference)
-    validation, _ = _commit(path, document)
+    validation, _ = _commit(path, document, getattr(args, "unsafe_direct_edit", False))
     result = _envelope("add-texture")
     result["warnings"] = validation["warnings"]
     result["errors"] = validation["errors"]
@@ -353,7 +392,7 @@ def _cmd_add_mesh(args: argparse.Namespace) -> dict[str, Any]:
     refs = document.setdefault("dependencies", {}).setdefault("meshes", [])
     if reference not in refs:
         refs.append(reference)
-    validation, _ = _commit(path, document)
+    validation, _ = _commit(path, document, getattr(args, "unsafe_direct_edit", False))
     result = _envelope("add-mesh")
     result["warnings"] = validation["warnings"]
     result["errors"] = validation["errors"]
@@ -421,7 +460,14 @@ def _cmd_export(args: argparse.Namespace) -> dict[str, Any]:
     for source in source_files:
         try:
             output = output_root / source.name.removesuffix(".vfx.json") if batch_target else output_root
-            exported = export_file(source, output, run_smoke_test=not args.no_smoke_test)
+            exported = export_file(
+                source,
+                output,
+                run_smoke_test=not args.no_smoke_test,
+                mode=args.mode,
+                resource_root=args.resource_root,
+                shared_runtime_path=args.shared_runtime,
+            )
             smoke = exported.get("smoke_test", {})
             item_success = smoke.get("status") != "failed"
             item = {"path": str(source), "success": item_success, "export": exported}
@@ -503,7 +549,7 @@ def _explain(topic: str) -> dict[str, Any]:
             "commands": [
                 "create", "inspect", "validate", "list-layers", "add-layer", "remove-layer",
                 "update-layer", "set", "add-texture", "add-mesh", "add-event", "render-preview", "export",
-                "migrate", "diff", "explain", "schema",
+                "migrate", "diff", "explain", "schema", "forge", "plan", "recipes", "policies",
             ],
             "machine_mode": "Append --json to any command. Output uses success, command, errors, warnings, and artifacts.",
         }
@@ -513,6 +559,72 @@ def _explain(topic: str) -> dict[str, Any]:
 def _cmd_explain(args: argparse.Namespace) -> dict[str, Any]:
     result = _envelope("explain")
     result["data"] = _explain(args.topic)
+    return result
+
+
+def _load_request(path_value: str) -> dict[str, Any]:
+    if path_value == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = Path(path_value).read_text(encoding="utf-8")
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise VFXForgeError("Request must be a JSON object.", "INVALID_REQUEST")
+    return data
+
+
+def _cmd_forge(args: argparse.Namespace) -> dict[str, Any]:
+    request = _load_request(args.request)
+    result = forge(
+        request,
+        policy_id=args.policy,
+        workspace=args.workspace,
+        export=not args.no_export,
+        export_mode=args.export_mode,
+        resource_root=args.resource_root,
+        shared_runtime_path=args.shared_runtime,
+        allow_replace=args.allow_replace,
+    )
+    envelope = _envelope("forge")
+    envelope["success"] = result.get("production_ready", False)
+    envelope["data"] = result
+    if not envelope["success"]:
+        envelope["errors"] = result.get("errors") or result.get("review_reasons") or []
+    return envelope
+
+
+def _cmd_plan(args: argparse.Namespace) -> dict[str, Any]:
+    request = _load_request(args.request)
+    data = plan(request, args.policy)
+    envelope = _envelope("plan")
+    envelope["data"] = data
+    envelope["success"] = data.get("status") not in {"failed"}
+    if data.get("review_reasons"):
+        envelope["warnings"] = data["review_reasons"]
+    return envelope
+
+
+def _cmd_recipes(args: argparse.Namespace) -> dict[str, Any]:
+    result = _envelope("recipes")
+    if args.action == "list":
+        result["data"] = {"recipes": list_recipes()}
+        return result
+    if not args.name:
+        raise VFXForgeError("recipes show requires a recipe id.", "MISSING_RECIPE")
+    recipe = load_recipe(args.name)
+    result["data"] = {"recipe": recipe_ref(recipe), "matcher": recipe.get("matcher"), "description": recipe.get("description")}
+    return result
+
+
+def _cmd_policies(args: argparse.Namespace) -> dict[str, Any]:
+    result = _envelope("policies")
+    if args.action == "list":
+        result["data"] = {"policies": list_policies()}
+        return result
+    if not args.name:
+        raise VFXForgeError("policies show requires a policy id.", "MISSING_POLICY")
+    policy = load_policy(args.name)
+    result["data"] = {"policy": policy_ref(args.name), "description": policy.get("description"), "defaults": policy.get("defaults")}
     return result
 
 
@@ -560,6 +672,10 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         "explain": _cmd_explain,
         "schema": _cmd_explain,
         "preset": _cmd_preset,
+        "forge": _cmd_forge,
+        "plan": _cmd_plan,
+        "recipes": _cmd_recipes,
+        "policies": _cmd_policies,
     }
     if not args.command:
         raise VFXForgeError("A command is required. Use vfxforge explain for the command map.", "MISSING_COMMAND")
@@ -618,6 +734,9 @@ def main(argv: list[str] | None = None) -> int:
     if result.get("success"):
         return EXIT_OK
     command = result.get("command")
+    data = result.get("data")
+    if command == "forge" and isinstance(data, dict):
+        return exit_code_for(data)
     error_codes = {str(error.get("code", "")) for error in result.get("errors", []) if isinstance(error, dict)}
     usage_codes = {
         "ARGUMENT_ERROR", "MISSING_COMMAND", "MISSING_OUTPUT", "MISSING_PRESET", "INVALID_ASSIGNMENT",

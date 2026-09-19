@@ -1,0 +1,14 @@
+{
+  "request_version": 1,
+  "effect_id": "combat_fire_impact",
+  "intent": {
+    "kind": "impact",
+    "element": "fire",
+    "purpose": "damage",
+    "intensity": "standard"
+  },
+  "context": {
+    "target": "generic",
+    "usage": "normal_combat"
+  }
+}

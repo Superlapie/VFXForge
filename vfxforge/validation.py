@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .model import finite_number, is_stable_id, read_document
+from .property_spec import LAYER_STRUCT_KEYS, ROOT_KEYS, layer_curve_keys, layer_material_keys, layer_property_keys
 from .schema import BLEND_MODES, BUDGET_PROFILES, EMISSION_SHAPES, LAYER_TYPES, MESH_ASSET_EXTENSIONS
 
 
@@ -361,12 +362,19 @@ def validate_document(
     document: dict[str, Any],
     project_dir: str | Path | None = None,
     selected_budget: str | None = None,
+    strict: bool = False,
+    policy_ceilings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return stable structured validation data; this function never raises for bad fields."""
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     root = document if isinstance(document, dict) else {}
     project = Path(project_dir).resolve() if project_dir is not None else None
+
+    if strict and isinstance(root, dict):
+        for key in root:
+            if key not in ROOT_KEYS:
+                errors.append(issue("error", "UNKNOWN_ROOT_FIELD", key, f"Unknown root field '{key}' is not allowed in strict mode.", value=key))
 
     if root.get("schema_version") != 1 or isinstance(root.get("schema_version"), bool):
         errors.append(issue("error", "INVALID_SCHEMA_VERSION", "schema_version", "schema_version must be 1.", value=root.get("schema_version")))
@@ -412,14 +420,6 @@ def validate_document(
         if layer_type not in LAYER_TYPES:
             errors.append(issue("error", "UNKNOWN_LAYER_TYPE", f"{path}.type", f"Unsupported layer type '{layer_type}'.", f"Use one of: {', '.join(LAYER_TYPES)}.", layer_type))
             continue
-        if not isinstance(layer.get("name"), str) or not layer.get("name", "").strip():
-            warnings.append(issue("warning", "EMPTY_LAYER_NAME", f"{path}.name", "The layer has no display name."))
-        if not isinstance(layer.get("enabled"), bool):
-            errors.append(issue("error", "INVALID_ENABLED", f"{path}.enabled", "enabled must be boolean.", value=layer.get("enabled")))
-        _number(errors, warnings, layer.get("start"), f"{path}.start", 0.0, 3600.0, True)
-        layer_duration_ok = _number(errors, warnings, layer.get("duration"), f"{path}.duration", 0.001, 3600.0, True)
-        if layer_duration_ok and finite_number(layer.get("start")) and float(layer["start"]) + float(layer["duration"]) > duration + 1e-6:
-            warnings.append(issue("warning", "LAYER_OUTSIDE_DURATION", path, "The layer ends after the effect duration.", "Increase effect duration or shorten the layer."))
         properties = layer.get("properties", {})
         if not isinstance(properties, dict):
             errors.append(issue("error", "INVALID_PROPERTIES", f"{path}.properties", "Layer properties must be an object."))
@@ -428,6 +428,35 @@ def validate_document(
         if not isinstance(material, dict):
             errors.append(issue("error", "INVALID_MATERIAL", f"{path}.material", "Material settings must be an object."))
             material = {}
+        curves = layer.get("curves", {})
+        if not isinstance(curves, dict):
+            errors.append(issue("error", "INVALID_CURVES", f"{path}.curves", "curves must be an object."))
+            curves = {}
+        if strict:
+            for key in layer:
+                if key not in LAYER_STRUCT_KEYS:
+                    errors.append(issue("error", "UNKNOWN_LAYER_FIELD", f"{path}.{key}", f"Unknown layer field '{key}' is not allowed in strict mode.", value=key))
+            allowed_properties = layer_property_keys(layer_type)
+            allowed_material = layer_material_keys()
+            allowed_curves = layer_curve_keys(layer_type)
+            for key in properties:
+                if key not in allowed_properties:
+                    errors.append(issue("error", "UNKNOWN_LAYER_PROPERTY", f"{path}.properties.{key}", f"Unknown property '{key}' for layer type '{layer_type}'.", value=key))
+            for key in material:
+                if key not in allowed_material:
+                    errors.append(issue("error", "UNKNOWN_MATERIAL_FIELD", f"{path}.material.{key}", f"Unknown material field '{key}'.", value=key))
+            for curve_name in curves:
+                if curve_name not in allowed_curves:
+                    errors.append(issue("error", "UNKNOWN_CURVE", f"{path}.curves.{curve_name}", f"Unsupported curve '{curve_name}' for layer type '{layer_type}'.", value=curve_name))
+        if not isinstance(layer.get("name"), str) or not layer.get("name", "").strip():
+            warnings.append(issue("warning", "EMPTY_LAYER_NAME", f"{path}.name", "The layer has no display name."))
+        if not isinstance(layer.get("enabled"), bool):
+            errors.append(issue("error", "INVALID_ENABLED", f"{path}.enabled", "enabled must be boolean.", value=layer.get("enabled")))
+        _number(errors, warnings, layer.get("start"), f"{path}.start", 0.0, 3600.0, True)
+        layer_duration_ok = _number(errors, warnings, layer.get("duration"), f"{path}.duration", 0.001, 3600.0, True)
+        if layer_duration_ok and finite_number(layer.get("start")) and float(layer["start"]) + float(layer["duration"]) > duration + 1e-6:
+            outside = issue("warning", "LAYER_OUTSIDE_DURATION", path, "The layer ends after the effect duration.", "Increase effect duration or shorten the layer.")
+            (errors if strict else warnings).append(outside)
         blend = material.get("blend_mode", "additive")
         if blend not in BLEND_MODES:
             errors.append(issue("error", "INVALID_BLEND_MODE", f"{path}.material.blend_mode", f"Use one of: {', '.join(BLEND_MODES)}.", value=blend))
@@ -443,7 +472,8 @@ def validate_document(
             _number(errors, warnings, properties.get("amount"), f"{path}.properties.amount", 0, 200000, True)
             _number(errors, warnings, properties.get("lifetime"), f"{path}.properties.lifetime", 0.001, 3600.0, True)
             if properties.get("amount") == 0:
-                warnings.append(issue("warning", "ZERO_PARTICLES", f"{path}.properties.amount", "The emitter is configured to produce zero particles.", "Set amount above zero or disable the layer."))
+                zero_issue = issue("warning", "ZERO_PARTICLES", f"{path}.properties.amount", "The emitter is configured to produce zero particles.", "Set amount above zero or disable the layer.")
+                (errors if strict else warnings).append(zero_issue)
             if properties.get("emission_shape") not in EMISSION_SHAPES:
                 errors.append(issue("error", "INVALID_EMISSION_SHAPE", f"{path}.properties.emission_shape", f"Use one of: {', '.join(EMISSION_SHAPES)}.", value=properties.get("emission_shape")))
         vector_keys = ["direction", "gravity", "attractor_position"]
@@ -456,12 +486,8 @@ def validate_document(
             _vector(properties["size"], f"{path}.properties.size", 2, errors)
         if layer_type == "mesh_effect":
             _vector(properties.get("size"), f"{path}.properties.size", 3, errors)
-        curves = layer.get("curves", {})
-        if not isinstance(curves, dict):
-            errors.append(issue("error", "INVALID_CURVES", f"{path}.curves", "curves must be an object."))
-        else:
-            for curve_name, curve_value in curves.items():
-                _validate_curve(curve_value, f"{path}.curves.{curve_name}", errors, warnings)
+        for curve_name, curve_value in curves.items():
+            _validate_curve(curve_value, f"{path}.curves.{curve_name}", errors, warnings)
         _validate_gradient(layer.get("gradient", []), f"{path}.gradient", errors)
 
     timeline = root.get("timeline", {})
@@ -486,7 +512,8 @@ def validate_document(
                 else:
                     event_ids.add(event_id)
                 if _number(errors, warnings, event.get("time"), f"{event_path}.time", 0.0, 3600.0, True) and finite_number(event.get("time")) and float(event["time"]) > duration:
-                    warnings.append(issue("warning", "EVENT_OUTSIDE_DURATION", event_path, "The event occurs after the effect duration."))
+                    outside_event = issue("warning", "EVENT_OUTSIDE_DURATION", event_path, "The event occurs after the effect duration.")
+                    (errors if strict else warnings).append(outside_event)
 
     dependencies = root.get("dependencies", {})
     if not isinstance(dependencies, dict):
@@ -527,17 +554,29 @@ def validate_document(
         budgets = {}
     profile_name = selected_budget or budgets.get("profile", "Medium")
     if profile_name not in BUDGET_PROFILES:
-        warnings.append(issue("warning", "UNKNOWN_BUDGET_PROFILE", "budgets.profile", f"Unknown budget profile '{profile_name}', using Medium.", value=profile_name))
-        profile_name = "Medium"
-    profile = BUDGET_PROFILES[profile_name]
+        unknown_profile = issue("warning", "UNKNOWN_BUDGET_PROFILE", "budgets.profile", f"Unknown budget profile '{profile_name}', using Medium.", value=profile_name)
+        if strict:
+            errors.append(issue("error", "UNKNOWN_BUDGET_PROFILE", "budgets.profile", f"Unknown budget profile '{profile_name}'.", value=profile_name))
+        else:
+            warnings.append(unknown_profile)
+            profile_name = "Medium"
+    profile = BUDGET_PROFILES.get(profile_name, BUDGET_PROFILES["Medium"])
+    if policy_ceilings:
+        profile = {
+            "max_particles": policy_ceilings.get("max_particles", profile["max_particles"]),
+            "max_lights": policy_ceilings.get("max_lights", profile["max_lights"]),
+            "max_draw_calls": policy_ceilings.get("max_draw_calls", profile["max_draw_calls"]),
+            "max_layers": policy_ceilings.get("max_layers", profile["max_layers"]),
+        }
+    budget_target = errors if strict else warnings
     if metrics["peak_particles_estimate"] > profile["max_particles"]:
-        warnings.append(issue("warning", "PARTICLE_BUDGET_EXCEEDED", "layers", f"Estimated peak particles ({metrics['peak_particles_estimate']}) exceed {profile_name} budget ({int(profile['max_particles'])}).", "Lower emitter amounts or choose an intentional higher budget."))
+        budget_target.append(issue("warning" if not strict else "error", "PARTICLE_BUDGET_EXCEEDED", "layers", f"Estimated peak particles ({metrics['peak_particles_estimate']}) exceed {profile_name} budget ({int(profile['max_particles'])}).", "Lower emitter amounts or choose an intentional higher budget."))
     if metrics["lights"] > profile["max_lights"]:
-        warnings.append(issue("warning", "LIGHT_BUDGET_EXCEEDED", "layers", f"Estimated dynamic lights ({metrics['lights']}) exceed {profile_name} budget ({int(profile['max_lights'])}).", "Reduce dynamic lights or use baked/mesh glow."))
+        budget_target.append(issue("warning" if not strict else "error", "LIGHT_BUDGET_EXCEEDED", "layers", f"Estimated dynamic lights ({metrics['lights']}) exceed {profile_name} budget ({int(profile['max_lights'])}).", "Reduce dynamic lights or use baked/mesh glow."))
     if metrics["draw_calls_estimate"] > profile["max_draw_calls"]:
-        warnings.append(issue("warning", "DRAW_CALL_BUDGET_EXCEEDED", "layers", f"Estimated draw calls ({metrics['draw_calls_estimate']}) exceed {profile_name} budget ({int(profile['max_draw_calls'])})."))
+        budget_target.append(issue("warning" if not strict else "error", "DRAW_CALL_BUDGET_EXCEEDED", "layers", f"Estimated draw calls ({metrics['draw_calls_estimate']}) exceed {profile_name} budget ({int(profile['max_draw_calls'])})."))
     if metrics["layer_count"] > profile["max_layers"]:
-        warnings.append(issue("warning", "LAYER_BUDGET_EXCEEDED", "layers", f"Layer count ({metrics['layer_count']}) exceeds {profile_name} budget ({int(profile['max_layers'])})."))
+        budget_target.append(issue("warning" if not strict else "error", "LAYER_BUDGET_EXCEEDED", "layers", f"Layer count ({metrics['layer_count']}) exceeds {profile_name} budget ({int(profile['max_layers'])})."))
     if metrics["overdraw_layers"] >= 6:
         warnings.append(issue("warning", "OVERDRAW_RISK", "layers", f"{metrics['overdraw_layers']} transparent/additive layers may create heavy overdraw.", "Preview on target hardware and consolidate cards where possible."))
     if duration > 30.0:

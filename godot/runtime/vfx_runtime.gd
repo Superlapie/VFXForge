@@ -11,6 +11,8 @@ var playback_speed: float = 1.0
 var is_playing: bool = false
 var child_depth: int = 0
 var asset_root: String = "res://"
+var runtime_script_path: String = "res://vfx_runtime.gd"
+var trail_script_path: String = "res://godot/runtime/vfx_trail.gd"
 var generated_nodes: Array[Node] = []
 var beam_nodes: Array[MeshInstance3D] = []
 var editor_solo_layer_id: String = ""
@@ -285,7 +287,7 @@ func _create_light(layer: Dictionary) -> OmniLight3D:
 
 
 func _create_trail(layer: Dictionary) -> Node:
-    var trail_script := load("res://godot/runtime/vfx_trail.gd")
+    var trail_script := load(trail_script_path)
     if trail_script == null:
         runtime_warning.emit("Trail script is unavailable; layer will be skipped.")
         return null
@@ -360,8 +362,10 @@ func _create_child_effect(layer: Dictionary) -> Node:
             return Node3D.new()
         var parsed: Variant = JSON.parse_string(file.get_as_text())
         var runtime_node := Node3D.new()
-        runtime_node.set_script(load("res://vfx_runtime.gd"))
+        runtime_node.set_script(load(runtime_script_path))
         runtime_node.set("child_depth", child_depth + 1)
+        runtime_node.set("runtime_script_path", runtime_script_path)
+        runtime_node.set("trail_script_path", trail_script_path)
         if parsed is Dictionary:
             runtime_node.call("set_document", parsed, asset_root)
         return runtime_node

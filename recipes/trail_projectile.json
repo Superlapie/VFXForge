@@ -1,0 +1,293 @@
+{
+  "recipe_id": "trail.projectile",
+  "recipe_version": 1,
+  "description": "Projectile Trail",
+  "display_name": "Projectile Trail",
+  "matcher": {
+    "intent.kind": "projectile_trail"
+  },
+  "priority": 100,
+  "seed": 26591,
+  "document": {
+    "schema_version": 1,
+    "name": "Weapon Trail",
+    "duration": 0.9,
+    "loop": false,
+    "seed": 26591,
+    "metadata": {
+      "author": "",
+      "description": "",
+      "created_with": "VFX Forge 0.1.0",
+      "notes": ""
+    },
+    "tags": [
+      "trail",
+      "weapon",
+      "melee"
+    ],
+    "layers": [
+      {
+        "name": "Blade Trail",
+        "enabled": true,
+        "start": 0.0,
+        "duration": 0.85,
+        "properties": {
+          "width": 0.24,
+          "lifetime": 0.4,
+          "segments": 20,
+          "color": "#C4D8FFFF",
+          "alpha": 1.0,
+          "uv_mode": "stretch",
+          "texture": "",
+          "target": "self"
+        },
+        "material": {
+          "blend_mode": "additive",
+          "unshaded": true,
+          "billboard": "enabled",
+          "depth_draw": "always",
+          "texture": "",
+          "tint": "#FFFFFFFF",
+          "uv_scroll": [
+            0.0,
+            0.0
+          ],
+          "distortion": 0.0,
+          "dissolve": 0.0,
+          "fresnel": 0.0,
+          "emissive_intensity": 1.0
+        },
+        "curves": {
+          "width": {
+            "interpolation": "linear",
+            "points": [
+              {
+                "x": 0.0,
+                "y": 1.0
+              },
+              {
+                "x": 1.0,
+                "y": 0.0
+              }
+            ]
+          }
+        },
+        "gradient": [
+          {
+            "position": 0.0,
+            "color": "#FFFFFFFF"
+          },
+          {
+            "position": 1.0,
+            "color": "#00000000"
+          }
+        ],
+        "id": "blade_trail",
+        "type": "trail"
+      },
+      {
+        "name": "Trail Sparks",
+        "enabled": true,
+        "start": 0.0,
+        "duration": 0.8,
+        "properties": {
+          "amount": 18,
+          "one_shot": true,
+          "lifetime": 0.5,
+          "explosiveness": 0.8,
+          "randomness": 0.15,
+          "fixed_fps": 0,
+          "local_coords": false,
+          "emission_shape": "line",
+          "emission_box_extents": [
+            0.25,
+            0.25,
+            0.25
+          ],
+          "emission_radius": 0.5,
+          "emission_height": 0.1,
+          "direction": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "spread": 35.0,
+          "initial_velocity_min": 0.6,
+          "initial_velocity_max": 1.8,
+          "gravity": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "damping": 0.0,
+          "radial_accel": 0.0,
+          "tangential_accel": 0.0,
+          "turbulence": 0.0,
+          "attractor_strength": 0.0,
+          "attractor_position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale_min": 0.08,
+          "scale_max": 0.16,
+          "rotation_min": 0.0,
+          "rotation_max": 360.0,
+          "angular_velocity_min": -90.0,
+          "angular_velocity_max": 90.0,
+          "texture": "",
+          "color": "#B7D5FFFF"
+        },
+        "material": {
+          "blend_mode": "additive",
+          "unshaded": true,
+          "billboard": "enabled",
+          "depth_draw": "always",
+          "texture": "",
+          "tint": "#FFFFFFFF",
+          "uv_scroll": [
+            0.0,
+            0.0
+          ],
+          "distortion": 0.0,
+          "dissolve": 0.0,
+          "fresnel": 0.0,
+          "emissive_intensity": 1.0
+        },
+        "curves": {
+          "scale": {
+            "interpolation": "linear",
+            "points": [
+              {
+                "x": 0.0,
+                "y": 0.35
+              },
+              {
+                "x": 0.15,
+                "y": 1.0
+              },
+              {
+                "x": 1.0,
+                "y": 0.0
+              }
+            ]
+          },
+          "alpha": {
+            "interpolation": "linear",
+            "points": [
+              {
+                "x": 0.0,
+                "y": 0.0
+              },
+              {
+                "x": 0.1,
+                "y": 1.0
+              },
+              {
+                "x": 0.75,
+                "y": 1.0
+              },
+              {
+                "x": 1.0,
+                "y": 0.0
+              }
+            ]
+          },
+          "velocity": {
+            "interpolation": "linear",
+            "points": [
+              {
+                "x": 0.0,
+                "y": 1.0
+              },
+              {
+                "x": 1.0,
+                "y": 0.2
+              }
+            ]
+          }
+        },
+        "gradient": [
+          {
+            "position": 0.0,
+            "color": "#FFFFFFFF"
+          },
+          {
+            "position": 1.0,
+            "color": "#00000000"
+          }
+        ],
+        "id": "trail_sparks",
+        "type": "particle"
+      }
+    ],
+    "dependencies": {
+      "textures": [],
+      "meshes": [],
+      "effects": []
+    },
+    "timeline": {
+      "events": [],
+      "snap": 0.05
+    },
+    "camera_presets": {
+      "front": {
+        "position": [
+          0.0,
+          1.2,
+          5.0
+        ],
+        "target": [
+          0.0,
+          0.8,
+          0.0
+        ],
+        "fov": 45.0
+      },
+      "mmo": {
+        "position": [
+          4.5,
+          4.0,
+          5.5
+        ],
+        "target": [
+          0.0,
+          0.7,
+          0.0
+        ],
+        "fov": 50.0
+      },
+      "top": {
+        "position": [
+          0.0,
+          6.0,
+          0.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "fov": 45.0
+      }
+    },
+    "budgets": {
+      "profile": "Medium",
+      "custom": {}
+    },
+    "export": {
+      "godot_version": "4.x",
+      "folder_name": "weapon_trail",
+      "include_metadata": true,
+      "embed_document": true,
+      "copy_textures": true,
+      "copy_meshes": true
+    }
+  },
+  "intensity_scale": {
+    "subtle": 0.7,
+    "standard": 1.0,
+    "strong": 1.25,
+    "boss": 1.5
+  }
+}

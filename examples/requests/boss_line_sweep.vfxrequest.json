@@ -1,0 +1,20 @@
+{
+  "request_version": 1,
+  "effect_id": "meridian_line_sweep",
+  "intent": {
+    "kind": "boss_ability",
+    "element": "arcane",
+    "purpose": "danger_warning",
+    "intensity": "boss"
+  },
+  "gameplay": {
+    "shape": "line",
+    "length_tiles": 4,
+    "width_tiles": 1,
+    "tell_ms": 900
+  },
+  "context": {
+    "target": "enigma",
+    "usage": "boss_combat"
+  }
+}

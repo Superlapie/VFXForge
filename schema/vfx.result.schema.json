@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vfxforge.local/schema/vfx.result.schema.json",
+  "title": "VFX Forge Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["result_version", "status", "success", "production_ready", "effect_id"],
+  "properties": {
+    "result_version": {"const": 1},
+    "status": {"enum": ["ready", "ready_corrected", "needs_review", "failed"]},
+    "success": {"type": "boolean"},
+    "production_ready": {"type": "boolean"},
+    "effect_id": {"type": "string"},
+    "job_id": {"type": "string"},
+    "recipe": {"type": "object"},
+    "policy": {"type": "object"},
+    "seed": {"type": "integer"},
+    "corrections": {"type": "array"},
+    "validation": {"type": "object"},
+    "metrics": {"type": "object"},
+    "previews": {"type": "object"},
+    "runtime_validation": {"type": "object"},
+    "export_validation": {"type": "object"},
+    "artifacts": {"type": "object"},
+    "hashes": {"type": "object"},
+    "reproduction": {"type": "object"},
+    "review_reasons": {"type": "array"},
+    "errors": {"type": "array"}
+  }
+}

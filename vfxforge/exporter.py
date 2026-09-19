@@ -112,8 +112,8 @@ def _escaped_document_string(document: dict[str, Any]) -> str:
     return serialized.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
 
 
-def _write_generated_script(destination: Path, document: dict[str, Any]) -> None:
-    script = f'''extends "res://vfx_runtime.gd"
+def _write_generated_script(destination: Path, document: dict[str, Any], runtime_path: str = "res://vfx_runtime.gd") -> None:
+    script = f'''extends "{runtime_path}"
 
 const DOCUMENT_JSON: String = "{_escaped_document_string(document)}"
 
@@ -145,10 +145,10 @@ environment/defaults/default_clear_color=Color(0.035, 0.045, 0.07, 1)
     destination.write_text(project, encoding="utf-8")
 
 
-def _write_tscn(destination: Path) -> None:
-    scene = """[gd_scene load_steps=2 format=3]
+def _write_tscn(destination: Path, script_path: str = "res://effect.gd") -> None:
+    scene = f"""[gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://effect.gd" id="1_effect"]
+[ext_resource type="Script" path="{script_path}" id="1_effect"]
 
 [node name="VFXEffect" type="Node3D"]
 script = ExtResource("1_effect")
@@ -284,8 +284,16 @@ def export_document(
     source_path: str | Path,
     output: str | Path,
     run_smoke_test: bool = True,
+    mode: str = "standalone",
+    resource_root: str | None = None,
+    shared_runtime_path: str | None = None,
 ) -> dict[str, Any]:
-    """Export normal Godot content with relative dependencies and a manifest."""
+    """Export Godot content with relative dependencies and a manifest.
+
+    mode:
+      standalone - self-contained mini-project with project.godot
+      library    - nested bundle for host projects without project.godot
+    """
     source = Path(source_path).resolve()
     project_dir = source.parent
     validation = validate_document(document, project_dir)
@@ -374,13 +382,23 @@ def export_document(
         raise ExportError("The Godot runtime source is missing from the repository.", "RUNTIME_SOURCE_MISSING", str(runtime_source))
     if not trail_source.exists():
         raise ExportError("The Godot trail runtime source is missing from the repository.", "TRAIL_SOURCE_MISSING", str(trail_source))
-    shutil.copy2(runtime_source, destination / "vfx_runtime.gd")
+    if mode not in {"standalone", "library"}:
+        raise ExportError(f"Unsupported export mode '{mode}'.", "INVALID_EXPORT_MODE", mode)
+    root_prefix = resource_root.rstrip("/") if resource_root else None
+    if mode == "library" and not root_prefix:
+        root_prefix = "res://generated/vfx/" + str(document.get("id", "effect"))
+    runtime_script = shared_runtime_path or (f"{root_prefix}/vfx_runtime.gd" if mode == "library" else "res://vfx_runtime.gd")
+    effect_script_path = f"{root_prefix}/effect.gd" if mode == "library" and root_prefix else "res://effect.gd"
+    if mode == "standalone" or shared_runtime_path is None:
+        shutil.copy2(runtime_source, destination / "vfx_runtime.gd")
     trail_destination = destination / "godot" / "runtime"
-    trail_destination.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(trail_source, trail_destination / "vfx_trail.gd")
-    _write_generated_script(destination / "effect.gd", exported_document)
-    _write_tscn(destination / "effect.tscn")
-    _write_project_file(destination / "project.godot")
+    if mode == "standalone":
+        trail_destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(trail_source, trail_destination / "vfx_trail.gd")
+    _write_generated_script(destination / "effect.gd", exported_document, runtime_script)
+    _write_tscn(destination / "effect.tscn", effect_script_path)
+    if mode == "standalone":
+        _write_project_file(destination / "project.godot")
     (destination / "shaders" / "vfx_unlit.gdshader").write_text(
         """shader_type spatial;
 render_mode unshaded, cull_disabled, depth_draw_always, blend_add;
@@ -417,7 +435,7 @@ void fragment() {
             encoding="utf-8",
         )
     (destination / "document.vfx.json").write_text(json.dumps(exported_document, indent=2) + "\n", encoding="utf-8")
-    smoke = _run_godot_smoke(destination) if run_smoke_test else {"status": "not_requested"}
+    smoke = _run_godot_smoke(destination) if run_smoke_test and mode == "standalone" else {"status": "not_requested" if not run_smoke_test else "skipped", "reason": "Library export smoke requires host-project fixture."}
     files = _manifest(destination)
     manifest = {
         "manifest_version": 1,
@@ -426,6 +444,9 @@ void fragment() {
         "godot_target": GODOT_TARGET,
         "effect_id": document.get("id"),
         "entry_scene": "effect.tscn",
+        "export_mode": mode,
+        "resource_root": root_prefix,
+        "runtime_script": runtime_script,
         "files": files,
         "copied_textures": copied_files,
         "copied_meshes": copied_meshes,
@@ -438,6 +459,9 @@ void fragment() {
         "output": str(destination),
         "entry_scene": str(destination / "effect.tscn"),
         "manifest": str(destination / "export_manifest.json"),
+        "export_mode": mode,
+        "resource_root": root_prefix,
+        "runtime_script": runtime_script,
         "copied_textures": copied_files,
         "copied_meshes": copied_meshes,
         "copied_effects": copied_effects,
@@ -447,7 +471,22 @@ void fragment() {
     }
 
 
-def export_file(source: str | Path, output: str | Path, run_smoke_test: bool = True) -> dict[str, Any]:
+def export_file(
+    source: str | Path,
+    output: str | Path,
+    run_smoke_test: bool = True,
+    mode: str = "standalone",
+    resource_root: str | None = None,
+    shared_runtime_path: str | None = None,
+) -> dict[str, Any]:
     source_path = Path(source)
     document = read_document(source_path)
-    return export_document(document, source_path, output, run_smoke_test=run_smoke_test)
+    return export_document(
+        document,
+        source_path,
+        output,
+        run_smoke_test=run_smoke_test,
+        mode=mode,
+        resource_root=resource_root,
+        shared_runtime_path=shared_runtime_path,
+    )

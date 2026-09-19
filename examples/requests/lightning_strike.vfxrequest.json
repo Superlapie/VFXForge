@@ -1,0 +1,14 @@
+{
+  "request_version": 1,
+  "effect_id": "combat_lightning_strike",
+  "intent": {
+    "kind": "lightning_strike",
+    "element": "lightning",
+    "purpose": "damage",
+    "intensity": "strong"
+  },
+  "context": {
+    "target": "generic",
+    "usage": "normal_combat"
+  }
+}

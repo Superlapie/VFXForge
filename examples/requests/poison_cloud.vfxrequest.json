@@ -1,0 +1,14 @@
+{
+  "request_version": 1,
+  "effect_id": "combat_poison_cloud",
+  "intent": {
+    "kind": "cloud",
+    "element": "poison",
+    "purpose": "debuff",
+    "intensity": "standard"
+  },
+  "context": {
+    "target": "generic",
+    "usage": "normal_combat"
+  }
+}

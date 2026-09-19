@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vfxforge.local/schema/vfx.request.schema.json",
+  "title": "VFX Forge Semantic Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_version", "effect_id", "intent"],
+  "properties": {
+    "request_version": {"const": 1},
+    "effect_id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,63}$"},
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "element", "purpose"],
+      "properties": {
+        "kind": {"type": "string"},
+        "element": {"type": "string"},
+        "purpose": {"type": "string"},
+        "intensity": {"type": "string"}
+      }
+    },
+    "gameplay": {"type": "object", "additionalProperties": false},
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": {"type": "string"},
+        "usage": {"type": "string"}
+      }
+    },
+    "seed": {"type": "integer"}
+  }
+}

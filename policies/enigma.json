@@ -1,0 +1,57 @@
+{
+  "policy_id": "enigma",
+  "policy_version": 1,
+  "description": "Conservative Enigma host-game policy. Values are authoring defaults pending hardware tuning.",
+  "defaults": {
+    "budget_profile": "Medium",
+    "max_particles": 4000,
+    "max_lights": 3,
+    "max_draw_calls": 36,
+    "max_layers": 24,
+    "max_transparent_layers": 5,
+    "max_trail_segments": 20,
+    "max_beam_segments": 18,
+    "max_duration_sec": 20.0,
+    "max_texture_dimension": 1024,
+    "max_child_effect_depth": 3
+  },
+  "contexts": {
+    "normal_combat": {
+      "budget_profile": "Medium",
+      "max_particles": 4000,
+      "max_lights": 3,
+      "max_draw_calls": 36
+    },
+    "boss_combat": {
+      "budget_profile": "Boss",
+      "max_particles": 9000,
+      "max_lights": 5,
+      "max_draw_calls": 56
+    },
+    "ground_telegraph": {
+      "budget_profile": "Medium",
+      "max_particles": 2500,
+      "max_lights": 2,
+      "max_draw_calls": 20
+    },
+    "ambient_world": {
+      "budget_profile": "Low",
+      "max_particles": 1500,
+      "max_lights": 1,
+      "max_draw_calls": 18
+    },
+    "cinematic_preview": {
+      "budget_profile": "High",
+      "max_particles": 10000,
+      "max_lights": 6,
+      "max_draw_calls": 72
+    }
+  },
+  "allowed_layer_types": [
+    "particle", "mesh_particle", "sprite", "light", "trail", "beam", "decal",
+    "mesh_effect", "audio_marker", "event_marker", "child_effect"
+  ],
+  "require_godot_smoke": true,
+  "runtime_gate": "host_project",
+  "preview_cameras": ["mmo", "top"]
+}
