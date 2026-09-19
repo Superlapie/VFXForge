@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
@@ -357,10 +358,27 @@ def _cmd_set(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _resolve_asset_target(source: Path, asset_dir: Path) -> Path:
-    target = asset_dir / source.name
-    if target.exists() and target.read_bytes() != source.read_bytes():
-        target = asset_dir / f"{source.stem}_{source.stat().st_size}{source.suffix}"
-    return target
+    data = source.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()[:12]
+    plain = asset_dir / source.name
+    if plain.exists() and plain.read_bytes() == data:
+        return plain
+    if not plain.exists():
+        return plain
+    hashed = asset_dir / f"{source.stem}_{digest}{source.suffix}"
+    if hashed.exists():
+        if hashed.read_bytes() == data:
+            return hashed
+    else:
+        return hashed
+    counter = 1
+    while True:
+        candidate = asset_dir / f"{source.stem}_{digest}_{counter}{source.suffix}"
+        if not candidate.exists():
+            return candidate
+        if candidate.read_bytes() == data:
+            return candidate
+        counter += 1
 
 
 def _commit_asset_ingest(
@@ -378,7 +396,15 @@ def _commit_asset_ingest(
         refs.append(reference)
     target = _resolve_asset_target(source, asset_dir)
     created_new_asset = False
-    if not target.exists() or target.read_bytes() != source.read_bytes():
+    source_bytes = source.read_bytes()
+    if target.exists():
+        if target.read_bytes() != source_bytes:
+            raise VFXForgeError(
+                f"Asset ingest resolved to an existing different file: {target}",
+                "ASSET_TARGET_COLLISION",
+                str(target),
+            )
+    else:
         asset_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         created_new_asset = True

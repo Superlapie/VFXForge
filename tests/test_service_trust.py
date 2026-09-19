@@ -25,7 +25,7 @@ from vfxforge.service.policy import load_policy
 from vfxforge.service.promotion import acquire_promotion_lock, generation_digest, release_promotion_lock
 from vfxforge.service.request import normalize_request
 from vfxforge.service.result import ForgeStatus
-from vfxforge.service.runtime_conformance import validate_runtime_conformance
+from vfxforge.service.runtime_conformance import RUNTIME_PRODUCTION_LAYER_TYPES, validate_runtime_conformance
 from vfxforge.service.selector import list_recipes, load_recipe, select_recipe
 from vfxforge.service.semantic import validate_recipe_semantics
 from vfxforge.validation import validate_document
@@ -359,6 +359,37 @@ class RuntimeConformanceTests(unittest.TestCase):
         self.assertFalse(result["production_ready"])
         self.assertTrue(any(item["code"] == "UNSUPPORTED_RUNTIME_MATERIAL" for item in result["errors"]))
 
+    def test_canonical_layer_defaults_pass_strict_and_runtime_contracts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            for layer_type in sorted(RUNTIME_PRODUCTION_LAYER_TYPES):
+                layer = make_layer(layer_type, "probe")
+                document = default_document(f"probe_{layer_type}", f"Probe {layer_type}", 1.0)
+                document["layers"] = [layer]
+                path = project / f"{layer_type}.vfx.json"
+                write_document(path, document)
+                validation = validate_document(document, project, strict=True)
+                self.assertTrue(validation["valid"], msg=f"{layer_type}: {validation['errors']}")
+                runtime_errors = validate_runtime_conformance(document)
+                self.assertEqual(runtime_errors, [], msg=f"{layer_type}: {runtime_errors}")
+
+    def test_whitespace_attachment_is_rejected(self) -> None:
+        from vfxforge.service.request import validate_request
+
+        request = _read_request("trail_weapon.vfxrequest.json")
+        request["gameplay"]["attachment"] = "   "
+        document, errors = validate_request(request)
+        self.assertIsNone(document)
+        self.assertTrue(any(item["code"] == "INVALID_GAMEPLAY_ATTACHMENT" for item in errors))
+
+    def test_particle_billboard_enum_is_validated_even_when_emulated(self) -> None:
+        document = default_document("billboard_probe", "Billboard Probe", 1.0)
+        layer = make_layer("particle", "sparks")
+        layer["material"]["billboard"] = "banana"
+        document["layers"] = [layer]
+        errors = validate_runtime_conformance(document)
+        self.assertTrue(any(item["code"] == "UNSUPPORTED_RUNTIME_MATERIAL" for item in errors))
+
 
 class CapabilitiesDiscoveryTests(unittest.TestCase):
     def test_agent_can_discover_enigma_requirements_from_json(self) -> None:
@@ -376,10 +407,14 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         self.assertIsNone(payload["target_policy_bindings"]["generic"])
         self.assertIn("layer_support", payload)
         self.assertIn("mesh_particle", payload["runtime"]["layers"])
+        self.assertIn("schema_authorable_properties", payload["runtime"]["layers"]["mesh_particle"])
+        self.assertIn("rotation_speed", payload["runtime"]["layers"]["mesh_particle"]["schema_authorable_properties"])
+        self.assertNotIn("fixed_fps", payload["runtime"]["layers"]["mesh_particle"]["properties"])
         self.assertIn("audio_marker", payload["layer_support"]["schema_only_layer_types"])
         radius = payload["request_contract"]["gameplay"]["radius_tiles"]
         self.assertEqual(radius["minimum"], 0.25)
         self.assertEqual(radius["maximum"], 64.0)
+        self.assertIn("required", payload["request_contract"])
         self.assertIn("recipe_templates", payload)
         self.assertIn("runtime", payload)
         self.assertGreaterEqual(len(payload["recipe_templates"]), 15)

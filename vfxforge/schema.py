@@ -129,7 +129,7 @@ LAYER_DEFAULTS: dict[str, dict[str, Any]] = {
             "spread": 25.0,
             "initial_velocity": 1.5,
             "gravity": [0.0, -1.5, 0.0],
-            "rotation_speed": 90.0,
+            "rotation_speed": 0.0,
         },
         "curves": {"scale": curve([(0.0, 0.2), (0.12, 1.0), (1.0, 0.0)])},
     },

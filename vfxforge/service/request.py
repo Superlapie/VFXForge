@@ -204,7 +204,16 @@ def request_contract_dict() -> dict[str, Any]:
             "shape": sorted(GAMEPLAY_SHAPES),
             **numeric_fields,
             "loop": {"type": "boolean"},
-            "attachment": {"type": "string", "minLength": 1},
+            "attachment": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+        },
+        "required": {
+            "root": ["request_version", "effect_id", "intent"],
+            "intent": ["kind", "element", "purpose"],
+        },
+        "defaults": {
+            "context.target": "generic",
+            "context.usage": "normal_combat",
+            "intent.intensity": "standard",
         },
     }
 

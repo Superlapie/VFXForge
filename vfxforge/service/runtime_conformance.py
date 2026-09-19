@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from ..property_spec import layer_curve_keys, layer_material_keys, layer_property_keys
 from ..resources import godot_runtime_dir
-from ..schema import BILLBOARD_MODES, LAYER_TYPES
+from ..schema import BILLBOARD_MODES, BLEND_MODES, COMMON_LAYER, LAYER_DEFAULTS, LAYER_TYPES
 
 
-RUNTIME_CONTRACT_VERSION = 3
+RUNTIME_CONTRACT_VERSION = 4
 
 PropertyTier = str  # implemented | emulated | inert_only | unsupported | host_bound
 
@@ -24,32 +25,10 @@ PARTICLE_EMISSION_SHAPES = frozenset({
     "disc",
 })
 
-STANDARD_MATERIAL_DEFAULTS: dict[str, Any] = {
-    "blend_mode": "additive",
-    "unshaded": True,
-    "billboard": "enabled",
-    "depth_draw": "always",
-    "texture": "",
-    "tint": "#FFFFFFFF",
-    "uv_scroll": [0.0, 0.0],
-    "distortion": 0.0,
-    "dissolve": 0.0,
-    "fresnel": 0.0,
-    "emissive_intensity": 1.0,
-}
+STANDARD_MATERIAL_DEFAULTS: dict[str, Any] = dict(COMMON_LAYER["material"])
 
 MATERIAL_UNUSED: dict[str, PropertyTier] = {
-    "blend_mode": "inert_only",
-    "unshaded": "inert_only",
-    "billboard": "inert_only",
-    "depth_draw": "inert_only",
-    "texture": "inert_only",
-    "tint": "inert_only",
-    "uv_scroll": "inert_only",
-    "distortion": "inert_only",
-    "dissolve": "inert_only",
-    "fresnel": "inert_only",
-    "emissive_intensity": "inert_only",
+    key: "inert_only" for key in STANDARD_MATERIAL_DEFAULTS
 }
 
 MATERIAL_DRAW_STANDARD: dict[str, PropertyTier] = {
@@ -71,227 +50,115 @@ MATERIAL_PARTICLE_DRAW: dict[str, PropertyTier] = {
     "billboard": "emulated",
 }
 
-PARTICLE_PROPERTIES: dict[str, PropertyTier] = {
-    "amount": "implemented",
-    "one_shot": "implemented",
-    "lifetime": "implemented",
-    "explosiveness": "implemented",
-    "randomness": "implemented",
-    "fixed_fps": "implemented",
-    "local_coords": "implemented",
-    "emission_shape": "implemented",
-    "emission_box_extents": "implemented",
-    "emission_radius": "implemented",
-    "emission_height": "implemented",
-    "direction": "implemented",
-    "spread": "implemented",
-    "initial_velocity": "implemented",
-    "initial_velocity_min": "implemented",
-    "initial_velocity_max": "implemented",
-    "gravity": "implemented",
-    "damping": "implemented",
-    "radial_accel": "implemented",
-    "tangential_accel": "implemented",
-    "scale_min": "implemented",
-    "scale_max": "implemented",
-    "rotation_min": "implemented",
-    "rotation_max": "implemented",
-    "angular_velocity_min": "implemented",
-    "angular_velocity_max": "implemented",
-    "flipbook_start_frame": "implemented",
-    "flipbook_frames": "implemented",
-    "flipbook_fps": "implemented",
-    "flipbook_loop": "implemented",
-    "texture": "implemented",
-    "color": "implemented",
-    "size": "implemented",
-    "mesh_asset": "implemented",
-    "turbulence": "inert_only",
-    "attractor_strength": "inert_only",
-    "attractor_position": "inert_only",
-}
-
-PARTICLE_PROPERTY_DEFAULTS: dict[str, Any] = {
-    "turbulence": 0.0,
-    "attractor_strength": 0.0,
-    "attractor_position": [0.0, 0.0, 0.0],
-}
-
-PARTICLE_CURVES: dict[str, PropertyTier] = {
-    "scale": "implemented",
-    "alpha": "implemented",
-    "velocity": "emulated",
-}
-
-LAYER_CONTRACTS: dict[str, dict[str, Any]] = {
+PROPERTY_TIER_OVERRIDES: dict[str, dict[str, PropertyTier]] = {
     "particle": {
-        "properties": dict(PARTICLE_PROPERTIES),
-        "property_defaults": dict(PARTICLE_PROPERTY_DEFAULTS),
-        "curves": dict(PARTICLE_CURVES),
-        "material": dict(MATERIAL_PARTICLE_DRAW),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
+        "turbulence": "inert_only",
+        "attractor_strength": "inert_only",
+        "attractor_position": "inert_only",
     },
     "mesh_particle": {
-        "properties": {
-            **PARTICLE_PROPERTIES,
-            "mesh": "inert_only",
-            "rotation_speed": "inert_only",
-        },
-        "property_defaults": {
-            **PARTICLE_PROPERTY_DEFAULTS,
-            "mesh": "quad",
-            "rotation_speed": 0.0,
-        },
-        "curves": dict(PARTICLE_CURVES),
-        "material": dict(MATERIAL_PARTICLE_DRAW),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
+        "mesh": "inert_only",
+        "rotation_speed": "inert_only",
+        "turbulence": "inert_only",
+        "attractor_strength": "inert_only",
+        "attractor_position": "inert_only",
     },
     "trail": {
-        "properties": {
-            "width": "implemented",
-            "lifetime": "implemented",
-            "segments": "implemented",
-            "color": "implemented",
-            "alpha": "implemented",
-            "target": "host_bound",
-            "texture": "inert_only",
-            "uv_mode": "inert_only",
-        },
-        "property_defaults": {
-            "alpha": 1.0,
-            "texture": "",
-            "uv_mode": "stretch",
-            "target": "",
-        },
-        "curves": {
-            "width": "implemented",
-        },
-        "material": dict(MATERIAL_UNUSED),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
+        "target": "host_bound",
+        "texture": "inert_only",
+        "uv_mode": "inert_only",
     },
     "mesh_effect": {
-        "properties": {
-            "mesh": "implemented",
-            "mesh_asset": "implemented",
-            "size": "implemented",
-            "color": "implemented",
-            "rotation": "implemented",
-            "rotation_speed": "implemented",
-            "pulse": "implemented",
-            "dissolve": "inert_only",
-        },
-        "property_defaults": {
-            "dissolve": 0.0,
-            "pulse": 0.0,
-        },
-        "curves": {
-            "scale": "implemented",
-            "alpha": "implemented",
-        },
-        "material": dict(MATERIAL_DRAW_STANDARD),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
-    },
-    "decal": {
-        "properties": {
-            "size": "implemented",
-            "color": "implemented",
-            "texture": "implemented",
-            "height": "implemented",
-            "fade": "implemented",
-            "rotate": "implemented",
-        },
-        "property_defaults": {
-            "height": 0.0,
-            "fade": False,
-            "rotate": 0.0,
-        },
-        "curves": {
-            "alpha": "implemented",
-            "scale": "implemented",
-        },
-        "material": dict(MATERIAL_DRAW_STANDARD),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
-    },
-    "light": {
-        "properties": {
-            "color": "implemented",
-            "energy": "implemented",
-            "range": "implemented",
-            "shadow_enabled": "implemented",
-            "fade": "implemented",
-        },
-        "property_defaults": {
-            "fade": False,
-        },
-        "curves": {
-            "energy": "implemented",
-        },
-        "material": dict(MATERIAL_UNUSED),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
-    },
-    "beam": {
-        "properties": {
-            "source": "implemented",
-            "target": "implemented",
-            "segments": "implemented",
-            "thickness": "implemented",
-            "noise": "implemented",
-            "color": "implemented",
-            "texture": "implemented",
-            "scroll_speed": "implemented",
-            "fade": "implemented",
-        },
-        "property_defaults": {
-            "scroll_speed": 0.0,
-            "fade": 0.0,
-        },
-        "curves": {
-            "width": "implemented",
-        },
-        "material": dict(MATERIAL_DRAW_STANDARD),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
+        "dissolve": "inert_only",
     },
     "event_marker": {
-        "properties": {
-            "event_id": "implemented",
-            "payload": "emulated",
-        },
-        "property_defaults": {
-            "payload": {},
-        },
-        "material": dict(MATERIAL_UNUSED),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
+        "payload": "emulated",
     },
     "sprite": {
-        "properties": {
-            "texture": "implemented",
-            "size": "implemented",
-            "flipbook_columns": "implemented",
-            "flipbook_rows": "implemented",
-            "flipbook_frames": "implemented",
-            "flipbook_fps": "implemented",
-            "flipbook_loop": "implemented",
-            "flipbook_start_frame": "implemented",
-            "random_start": "inert_only",
-            "pixel_snap": "inert_only",
-            "billboard": "implemented",
-            "color": "implemented",
-        },
-        "property_defaults": {
-            "random_start": False,
-            "pixel_snap": False,
-        },
-        "curves": {
-            "scale": "implemented",
-            "alpha": "implemented",
-        },
-        "material": dict(MATERIAL_DRAW_STANDARD),
-        "material_defaults": dict(STANDARD_MATERIAL_DEFAULTS),
+        "random_start": "inert_only",
+        "pixel_snap": "inert_only",
+        "billboard": "inert_only",
     },
 }
 
-RUNTIME_PRODUCTION_LAYER_TYPES = frozenset(LAYER_CONTRACTS)
+CURVE_TIER_OVERRIDES: dict[str, dict[str, PropertyTier]] = {
+    "particle": {"velocity": "emulated"},
+    "mesh_particle": {"velocity": "emulated"},
+}
+
+MATERIAL_TIER_OVERRIDES: dict[str, dict[str, PropertyTier]] = {
+    "particle": MATERIAL_PARTICLE_DRAW,
+    "mesh_particle": MATERIAL_PARTICLE_DRAW,
+    "trail": MATERIAL_UNUSED,
+    "light": MATERIAL_UNUSED,
+    "event_marker": MATERIAL_UNUSED,
+    "sprite": MATERIAL_DRAW_STANDARD,
+    "mesh_effect": MATERIAL_DRAW_STANDARD,
+    "decal": MATERIAL_DRAW_STANDARD,
+    "beam": MATERIAL_DRAW_STANDARD,
+}
+
+RUNTIME_PRODUCTION_LAYER_TYPES = frozenset(MATERIAL_TIER_OVERRIDES)
 SCHEMA_ONLY_LAYER_TYPES = frozenset(LAYER_TYPES) - RUNTIME_PRODUCTION_LAYER_TYPES
+
+
+def _property_default(layer_type: str, key: str) -> Any:
+    properties = LAYER_DEFAULTS[layer_type]["properties"]
+    if key in properties:
+        return properties[key]
+    if key == "color":
+        return ""
+    return None
+
+
+def _build_property_contract(layer_type: str) -> tuple[dict[str, PropertyTier], dict[str, Any]]:
+    tiers: dict[str, PropertyTier] = {}
+    defaults: dict[str, Any] = {}
+    overrides = PROPERTY_TIER_OVERRIDES.get(layer_type, {})
+    for key in sorted(layer_property_keys(layer_type)):
+        tier = overrides.get(key, "implemented")
+        tiers[key] = tier
+        if tier in {"inert_only", "host_bound"} or key in LAYER_DEFAULTS[layer_type]["properties"]:
+            defaults[key] = _property_default(layer_type, key)
+    return tiers, defaults
+
+
+def _build_curve_contract(layer_type: str) -> tuple[dict[str, PropertyTier], dict[str, Any]]:
+    tiers: dict[str, PropertyTier] = {}
+    defaults: dict[str, Any] = {}
+    overrides = CURVE_TIER_OVERRIDES.get(layer_type, {})
+    for key in sorted(layer_curve_keys(layer_type)):
+        tier = overrides.get(key, "implemented")
+        tiers[key] = tier
+        if key in LAYER_DEFAULTS[layer_type]["curves"]:
+            defaults[key] = LAYER_DEFAULTS[layer_type]["curves"][key]
+    return tiers, defaults
+
+
+def _build_material_contract(layer_type: str) -> tuple[dict[str, PropertyTier], dict[str, Any]]:
+    tiers = dict(MATERIAL_TIER_OVERRIDES[layer_type])
+    defaults = dict(STANDARD_MATERIAL_DEFAULTS)
+    return tiers, defaults
+
+
+def _build_layer_contracts() -> dict[str, dict[str, Any]]:
+    contracts: dict[str, dict[str, Any]] = {}
+    for layer_type in sorted(RUNTIME_PRODUCTION_LAYER_TYPES):
+        properties, property_defaults = _build_property_contract(layer_type)
+        curves, curve_defaults = _build_curve_contract(layer_type)
+        material, material_defaults = _build_material_contract(layer_type)
+        contracts[layer_type] = {
+            "properties": properties,
+            "property_defaults": property_defaults,
+            "curves": curves,
+            "curve_defaults": curve_defaults,
+            "material": material,
+            "material_defaults": material_defaults,
+        }
+    return contracts
+
+
+LAYER_CONTRACTS = _build_layer_contracts()
 
 
 def _resolved_layer_contract(layer_type: str) -> dict[str, Any] | None:
@@ -367,6 +234,39 @@ def _append_property_error(
     errors.append(item)
 
 
+def _validate_enum_field(
+    errors: list[dict[str, Any]],
+    *,
+    layer_id: str,
+    path: str,
+    key: str,
+    value: Any,
+    allowed: tuple[str, ...],
+    tier: PropertyTier,
+    unsupported_code: str,
+) -> None:
+    if key == "billboard" and str(value) not in allowed:
+        _append_property_error(
+            errors,
+            code=unsupported_code,
+            layer_id=layer_id,
+            path=path,
+            message=f"Layer '{layer_id}' uses unsupported billboard mode '{value}'.",
+            tier=tier,
+            supported=list(allowed),
+        )
+    if key == "blend_mode" and str(value) not in allowed:
+        _append_property_error(
+            errors,
+            code=unsupported_code,
+            layer_id=layer_id,
+            path=path,
+            message=f"Layer '{layer_id}' uses unsupported blend mode '{value}'.",
+            tier=tier,
+            supported=list(allowed),
+        )
+
+
 def _validate_property_map(
     errors: list[dict[str, Any]],
     *,
@@ -417,17 +317,28 @@ def _validate_property_map(
                 tier=tier,
             )
             continue
-        if key == "billboard" and tier == "implemented" and str(value) not in BILLBOARD_MODES:
-            _append_property_error(
+        if key == "billboard":
+            _validate_enum_field(
                 errors,
-                code=unsupported_code,
                 layer_id=layer_id,
                 path=path,
-                message=f"Layer '{layer_id}' uses unsupported billboard mode '{value}'.",
+                key=key,
+                value=value,
+                allowed=BILLBOARD_MODES,
                 tier=tier,
-                supported=list(BILLBOARD_MODES),
+                unsupported_code=unsupported_code,
             )
-            continue
+        if key == "blend_mode":
+            _validate_enum_field(
+                errors,
+                layer_id=layer_id,
+                path=path,
+                key=key,
+                value=value,
+                allowed=BLEND_MODES,
+                tier=tier,
+                unsupported_code=unsupported_code,
+            )
         if key in {"turbulence", "attractor_strength"}:
             numeric = _safe_float(value, 0.0)
             if numeric is None:
@@ -489,7 +400,9 @@ def _validate_curve_map(
 
 
 def _contract_export(layer_type: str, contract: dict[str, Any]) -> dict[str, Any]:
+    authorable = sorted(layer_property_keys(layer_type))
     return {
+        "schema_authorable_properties": authorable,
         "properties": dict(sorted(contract.get("properties", {}).items())),
         "property_defaults": dict(sorted(contract.get("property_defaults", {}).items())),
         "curves": dict(sorted(contract.get("curves", {}).items())),

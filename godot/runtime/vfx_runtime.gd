@@ -301,6 +301,17 @@ func _create_particle(layer: Dictionary, use_mesh: bool) -> GPUParticles3D:
     return particles
 
 
+func _resolve_billboard_mode(layer: Dictionary) -> int:
+    var settings: Dictionary = layer.get("material", {}) if layer.get("material", {}) is Dictionary else {}
+    var mode := str(settings.get("billboard", "enabled"))
+    return {
+        "disabled": BaseMaterial3D.BILLBOARD_DISABLED,
+        "enabled": BaseMaterial3D.BILLBOARD_ENABLED,
+        "y_billboard": BaseMaterial3D.BILLBOARD_FIXED_Y,
+        "particle": BaseMaterial3D.BILLBOARD_PARTICLES,
+    }.get(mode, BaseMaterial3D.BILLBOARD_ENABLED)
+
+
 func _create_card(layer: Dictionary) -> Node:
     var properties := _properties(layer)
     var texture_ref := str(properties.get("texture", ""))
@@ -309,7 +320,8 @@ func _create_card(layer: Dictionary) -> Node:
         var sprite := Sprite3D.new()
         sprite.name = str(layer.get("id", "sprite"))
         sprite.texture = texture
-        sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+        sprite.billboard = _resolve_billboard_mode(layer)
+        sprite.material = _material(layer)
         var size := _vec2(properties.get("size", [1.0, 1.0]))
         var texture_size := texture.get_size()
         sprite.pixel_size = size.x / max(1.0, texture_size.x)
@@ -594,12 +606,7 @@ func _material(layer: Dictionary) -> StandardMaterial3D:
         "premultiplied": BaseMaterial3D.BLEND_MODE_PREMULT_ALPHA,
         "multiply": BaseMaterial3D.BLEND_MODE_MUL
     }.get(blend, BaseMaterial3D.BLEND_MODE_ADD)
-    material.billboard_mode = {
-        "disabled": BaseMaterial3D.BILLBOARD_DISABLED,
-        "enabled": BaseMaterial3D.BILLBOARD_ENABLED,
-        "y_billboard": BaseMaterial3D.BILLBOARD_FIXED_Y,
-        "particle": BaseMaterial3D.BILLBOARD_PARTICLES,
-    }.get(str(settings.get("billboard", "enabled")), BaseMaterial3D.BILLBOARD_ENABLED)
+    material.billboard_mode = _resolve_billboard_mode(layer)
     if str(layer.get("type", "")) in ["particle", "mesh_particle"]:
         material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
         material.vertex_color_use_as_albedo = true

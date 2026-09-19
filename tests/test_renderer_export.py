@@ -51,7 +51,56 @@ class RendererExportTests(unittest.TestCase):
             write_document(parent_path, parent)
             output = root / "export"
             exported = export_document(parent, parent_path, output, run_smoke_test=False)
-            self.assertEqual(exported["copied_effects"], ["effects/child.vfx.json"])
-            self.assertTrue((output / "effects/child.vfx.json").exists())
+            self.assertEqual(len(exported["copied_effects"]), 1)
+            self.assertTrue(exported["copied_effects"][0].startswith("effects/child_"))
+            self.assertTrue(exported["copied_effects"][0].endswith(".vfx.json"))
+            exported_child = output / exported["copied_effects"][0]
+            self.assertTrue(exported_child.is_file())
             exported_doc = (output / "document.vfx.json").read_text(encoding="utf-8")
-            self.assertIn('"effect_id": "effects/child.vfx.json"', exported_doc)
+            self.assertIn(f'"effect_id": "{exported["copied_effects"][0]}"', exported_doc)
+
+    def test_nested_child_effect_resolves_relative_to_parent_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            attack_dir = root / "effects" / "attack"
+            attack_dir.mkdir(parents=True)
+            spark = make_preset("dust_burst")
+            spark["id"] = "attack_spark"
+            spark_path = attack_dir / "spark.vfx.json"
+            write_document(spark_path, spark)
+            parent = default_document("attack_parent", "Attack Parent", 1.0)
+            child_layer = make_layer("child_effect", "spark_child")
+            child_layer["properties"]["effect_id"] = "spark.vfx.json"
+            parent["layers"].append(child_layer)
+            parent_path = attack_dir / "parent.vfx.json"
+            write_document(parent_path, parent)
+            output = root / "export"
+            exported = export_document(parent, parent_path, output, run_smoke_test=False)
+            self.assertEqual(len(exported["copied_effects"]), 1)
+            exported_doc = (output / "document.vfx.json").read_text(encoding="utf-8")
+            self.assertIn('"effect_id": "effects/spark_', exported_doc)
+            self.assertTrue((output / exported["copied_effects"][0]).is_file())
+
+    def test_distinct_child_basenames_do_not_collide_in_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fire_dir = root / "effects" / "fire"
+            ice_dir = root / "effects" / "ice"
+            fire_dir.mkdir(parents=True)
+            ice_dir.mkdir(parents=True)
+            fire_child = default_document("fire_common", "Fire Common", 1.0)
+            ice_child = default_document("ice_common", "Ice Common", 1.0)
+            write_document(fire_dir / "common.vfx.json", fire_child)
+            write_document(ice_dir / "common.vfx.json", ice_child)
+            parent = default_document("dual_parent", "Dual Parent", 1.0)
+            fire_layer = make_layer("child_effect", "fire")
+            fire_layer["properties"]["effect_id"] = "effects/fire/common.vfx.json"
+            ice_layer = make_layer("child_effect", "ice")
+            ice_layer["properties"]["effect_id"] = "effects/ice/common.vfx.json"
+            parent["layers"].extend([fire_layer, ice_layer])
+            parent_path = root / "parent.vfx.json"
+            write_document(parent_path, parent)
+            output = root / "export"
+            exported = export_document(parent, parent_path, output, run_smoke_test=False)
+            self.assertEqual(len(exported["copied_effects"]), 2)
+            self.assertEqual(len(set(exported["copied_effects"])), 2)
