@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "id": "healing_aura",
+  "name": "Healing Aura",
+  "duration": 2.6,
+  "loop": true,
+  "seed": 9182,
+  "metadata": {
+    "author": "",
+    "description": "",
+    "created_with": "VFX Forge 0.1.0",
+    "notes": ""
+  },
+  "tags": [
+    "aura",
+    "healing",
+    "buff"
+  ],
+  "layers": [
+    {
+      "name": "Motes",
+      "enabled": true,
+      "start": 0.0,
+      "duration": 2.6,
+      "properties": {
+        "amount": 48,
+        "one_shot": false,
+        "lifetime": 2.4,
+        "explosiveness": 0.8,
+        "randomness": 0.15,
+        "fixed_fps": 0,
+        "local_coords": false,
+        "emission_shape": "ring",
+        "emission_box_extents": [
+          0.25,
+          0.25,
+          0.25
+        ],
+        "emission_radius": 1.0,
+        "emission_height": 0.1,
+        "direction": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "spread": 35.0,
+        "initial_velocity_min": 0.15,
+        "initial_velocity_max": 0.45,
+        "gravity": [
+          0.0,
+          0.2,
+          0.0
+        ],
+        "damping": 0.0,
+        "radial_accel": 0.0,
+        "tangential_accel": 0.0,
+        "turbulence": 0.0,
+        "attractor_strength": 0.0,
+        "attractor_position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale_min": 0.08,
+        "scale_max": 0.16,
+        "rotation_min": 0.0,
+        "rotation_max": 360.0,
+        "angular_velocity_min": -90.0,
+        "angular_velocity_max": 90.0,
+        "texture": "",
+        "color": "#80FFB9FF"
+      },
+      "material": {
+        "blend_mode": "additive",
+        "unshaded": true,
+        "billboard": "enabled",
+        "depth_draw": "always",
+        "texture": "",
+        "tint": "#FFFFFFFF",
+        "uv_scroll": [
+          0.0,
+          0.0
+        ],
+        "distortion": 0.0,
+        "dissolve": 0.0,
+        "fresnel": 0.0,
+        "emissive_intensity": 1.0
+      },
+      "curves": {
+        "scale": {
+          "interpolation": "linear",
+          "points": [
+            {
+              "x": 0.0,
+              "y": 0.35
+            },
+            {
+              "x": 0.15,
+              "y": 1.0
+            },
+            {
+              "x": 1.0,
+              "y": 0.0
+            }
+          ]
+        },
+        "alpha": {
+          "interpolation": "linear",
+          "points": [
+            {
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "x": 0.1,
+              "y": 1.0
+            },
+            {
+              "x": 0.75,
+              "y": 1.0
+            },
+            {
+              "x": 1.0,
+              "y": 0.0
+            }
+          ]
+        },
+        "velocity": {
+          "interpolation": "linear",
+          "points": [
+            {
+              "x": 0.0,
+              "y": 1.0
+            },
+            {
+              "x": 1.0,
+              "y": 0.2
+            }
+          ]
+        }
+      },
+      "gradient": [
+        {
+          "position": 0.0,
+          "color": "#FFFFFFFF"
+        },
+        {
+          "position": 1.0,
+          "color": "#00000000"
+        }
+      ],
+      "id": "motes",
+      "type": "particle"
+    },
+    {
+      "name": "Circle",
+      "enabled": true,
+      "start": 0.0,
+      "duration": 2.6,
+      "properties": {
+        "texture": "",
+        "size": [
+          2.6,
+          2.6
+        ],
+        "color": "#49E99A54",
+        "height": 0.02,
+        "fade": true,
+        "rotate": 0.0
+      },
+      "material": {
+        "blend_mode": "additive",
+        "unshaded": true,
+        "billboard": "enabled",
+        "depth_draw": "always",
+        "texture": "",
+        "tint": "#FFFFFFFF",
+        "uv_scroll": [
+          0.0,
+          0.0
+        ],
+        "distortion": 0.0,
+        "dissolve": 0.0,
+        "fresnel": 0.0,
+        "emissive_intensity": 1.0
+      },
+      "curves": {
+        "scale": {
+          "interpolation": "linear",
+          "points": [
+            {
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "x": 0.2,
+              "y": 1.0
+            },
+            {
+              "x": 1.0,
+              "y": 0.8
+            }
+          ]
+        }
+      },
+      "gradient": [
+        {
+          "position": 0.0,
+          "color": "#FFFFFFFF"
+        },
+        {
+          "position": 1.0,
+          "color": "#00000000"
+        }
+      ],
+      "id": "circle",
+      "type": "decal"
+    },
+    {
+      "name": "Healing Light",
+      "enabled": true,
+      "start": 0.0,
+      "duration": 2.6,
+      "properties": {
+        "color": "#73FFC0FF",
+        "energy": 1.8,
+        "range": 3.2,
+        "shadow_enabled": false,
+        "fade": true
+      },
+      "material": {
+        "blend_mode": "additive",
+        "unshaded": true,
+        "billboard": "enabled",
+        "depth_draw": "always",
+        "texture": "",
+        "tint": "#FFFFFFFF",
+        "uv_scroll": [
+          0.0,
+          0.0
+        ],
+        "distortion": 0.0,
+        "dissolve": 0.0,
+        "fresnel": 0.0,
+        "emissive_intensity": 1.0
+      },
+      "curves": {
+        "energy": {
+          "interpolation": "linear",
+          "points": [
+            {
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "x": 0.12,
+              "y": 1.0
+            },
+            {
+              "x": 0.7,
+              "y": 0.55
+            },
+            {
+              "x": 1.0,
+              "y": 0.0
+            }
+          ]
+        }
+      },
+      "gradient": [
+        {
+          "position": 0.0,
+          "color": "#FFFFFFFF"
+        },
+        {
+          "position": 1.0,
+          "color": "#00000000"
+        }
+      ],
+      "id": "healing_light",
+      "type": "light"
+    }
+  ],
+  "dependencies": {
+    "textures": [],
+    "effects": [],
+    "meshes": []
+  },
+  "timeline": {
+    "events": [],
+    "snap": 0.05
+  },
+  "camera_presets": {
+    "front": {
+      "position": [
+        0.0,
+        1.2,
+        5.0
+      ],
+      "target": [
+        0.0,
+        0.8,
+        0.0
+      ],
+      "fov": 45.0
+    },
+    "mmo": {
+      "position": [
+        4.5,
+        4.0,
+        5.5
+      ],
+      "target": [
+        0.0,
+        0.7,
+        0.0
+      ],
+      "fov": 50.0
+    },
+    "top": {
+      "position": [
+        0.0,
+        6.0,
+        0.0
+      ],
+      "target": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "fov": 45.0
+    }
+  },
+  "budgets": {
+    "profile": "Medium",
+    "custom": {}
+  },
+  "export": {
+    "godot_version": "4.x",
+    "folder_name": "healing_aura",
+    "include_metadata": true,
+    "embed_document": true,
+    "copy_textures": true,
+    "copy_meshes": true
+  }
+}

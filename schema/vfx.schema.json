@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vfxforge.local/schema/vfx.schema.json",
+  "title": "VFX Forge Project",
+  "type": "object",
+  "required": ["schema_version", "id", "name", "duration", "loop", "seed", "layers"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,63}$"},
+    "name": {"type": "string", "minLength": 1},
+    "duration": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
+    "loop": {"type": "boolean"},
+    "seed": {"type": "integer"},
+    "metadata": {"type": "object"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "layers": {"type": "array", "items": {"$ref": "#/$defs/layer"}},
+    "dependencies": {
+      "type": "object",
+      "properties": {
+        "textures": {"type": "array", "items": {"type": "string"}},
+        "meshes": {"type": "array", "items": {"type": "string"}},
+        "effects": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "timeline": {"type": "object"},
+    "camera_presets": {"type": "object"},
+    "budgets": {"type": "object"},
+    "export": {"type": "object"}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "layer": {
+      "type": "object",
+      "required": ["id", "type", "name", "enabled", "start", "duration"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,63}$"},
+        "type": {
+          "enum": ["particle", "mesh_particle", "sprite", "light", "trail", "beam", "decal", "mesh_effect", "audio_marker", "event_marker", "child_effect"]
+        },
+        "name": {"type": "string"},
+        "enabled": {"type": "boolean"},
+        "start": {"type": "number", "minimum": 0},
+        "duration": {"type": "number", "exclusiveMinimum": 0},
+        "properties": {"type": "object"},
+        "material": {"type": "object"},
+        "curves": {"type": "object"},
+        "gradient": {"type": "array"}
+      },
+      "additionalProperties": true
+    }
+  }
+}

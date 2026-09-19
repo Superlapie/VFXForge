@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+QUALITY_DIR="$ROOT/build/quality"
+mkdir -p "$QUALITY_DIR/previews" "$QUALITY_DIR/exports"
+export PYTHONPATH="$ROOT"
+
+GODOT_BIN="$(printenv VFXFORGE_GODOT 2>/dev/null || true)"
+if [[ -z "$GODOT_BIN" ]]; then
+  if command -v godot >/dev/null 2>&1; then
+    GODOT_BIN="$(command -v godot)"
+  elif command -v godot4 >/dev/null 2>&1; then
+    GODOT_BIN="$(command -v godot4)"
+  elif [[ -x "$ROOT/.tools/godot/Godot_v4.7.2-stable_linux.x86_64" ]]; then
+    GODOT_BIN="$ROOT/.tools/godot/Godot_v4.7.2-stable_linux.x86_64"
+  fi
+fi
+if [[ -n "$GODOT_BIN" ]]; then
+  export VFXFORGE_GODOT="$GODOT_BIN"
+fi
+
+echo "[1/7] Python model, CLI, and renderer tests"
+python3 -m unittest tests.test_model tests.test_cli tests.test_renderer_export -v
+
+echo "[2/7] User-facing CLI, Godot export, and GUI E2E"
+python3 -m unittest tests.test_user_e2e -v
+
+echo "[3/7] Batch schema validation"
+python3 -m vfxforge.cli validate "$ROOT/examples" --json > "$QUALITY_DIR/validate.json"
+
+echo "[4/7] Deterministic PNG previews"
+python3 -m vfxforge.cli render-preview "$ROOT/examples" \
+  --output "$QUALITY_DIR/previews" --time 0.6 --camera mmo --json > "$QUALITY_DIR/render.json"
+preview_count="$(find "$QUALITY_DIR/previews" -maxdepth 1 -type f -name '*.png' | wc -l)"
+test "$preview_count" -eq 8
+
+if [[ -n "$GODOT_BIN" ]]; then
+  echo "[5/7] Godot editor parse/startup smoke"
+  "$GODOT_BIN" --headless --editor --path "$ROOT" --quit > "$QUALITY_DIR/godot-editor.log" 2>&1
+  "$GODOT_BIN" --headless --path "$ROOT" --quit-after 2 > "$QUALITY_DIR/godot-gui-startup.log" 2>&1
+  echo "[6/7] Godot export and clean-project smoke"
+  python3 -m vfxforge.cli export "$ROOT/examples" --output "$QUALITY_DIR/exports" --json > "$QUALITY_DIR/export.json"
+else
+  echo "[5/7] Godot editor parse/startup smoke: SKIPPED (Godot 4.x not found)"
+  echo "[6/7] Godot export smoke: SKIPPED (Godot 4.x not found)"
+  python3 -m vfxforge.cli export "$ROOT/examples" --output "$QUALITY_DIR/exports" --no-smoke-test --json > "$QUALITY_DIR/export.json"
+fi
+
+manifest_count="$(find "$QUALITY_DIR/exports" -name 'export_manifest.json' -type f | wc -l)"
+test "$manifest_count" -eq 8
+
+echo "[7/7] Artifact checks"
+test -s "$QUALITY_DIR/validate.json"
+test -s "$QUALITY_DIR/render.json"
+test -s "$QUALITY_DIR/export.json"
+test -f "$QUALITY_DIR/exports/portal/meshes/forge_totem.obj"
+python3 - "$QUALITY_DIR/exports/portal/export_manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert manifest["copied_meshes"] == ["meshes/forge_totem.obj"]
+assert manifest["smoke_test"]["status"] in {"passed", "skipped", "not_requested"}
+PY
+echo "QUALITY GATE: PASS"

@@ -1,0 +1,29 @@
+# Godot generated/imported data
+.godot/
+*.import
+*.uid
+export.cfg
+
+# Python and local tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.tools/
+*.egg-info/
+
+# VFX Forge recovery and generated output
+*.vfx.json.bak
+*.autosave
+*.tmp
+build/
+exports/
+previews/
+smoke_project/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

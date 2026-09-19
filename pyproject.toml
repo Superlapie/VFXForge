@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vfxforge"
+version = "0.1.0"
+description = "AI-first Godot VFX authoring model and tooling"
+requires-python = ">=3.10"
+dependencies = ["Pillow>=9.0"]
+
+[project.scripts]
+vfxforge = "vfxforge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vfxforge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

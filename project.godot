@@ -1,0 +1,37 @@
+; VFX Forge standalone Godot 4.x project.
+; The canonical authoring source remains JSON, not this project file.
+config_version=5
+
+[application]
+config/name="VFX Forge"
+run/main_scene="res://godot/app/Main.tscn"
+
+[display]
+window/size/viewport_width=1440
+window/size/viewport_height=900
+window/size/window_width_override=1440
+window/size/window_height_override=900
+window/stretch/mode="canvas_items"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.027, 0.035, 0.055, 1)
+
+[input]
+save_project={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":83,"ctrl_pressed":true)]
+}
+undo_project={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":90,"ctrl_pressed":true)]
+}
+redo_project={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":89,"ctrl_pressed":true)]
+}
+play_preview={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":32)]
+}

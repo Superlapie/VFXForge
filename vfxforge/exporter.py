@@ -1,0 +1,453 @@
+"""Godot-native self-contained export and post-export validation."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
+
+from .errors import ExportError
+from .model import read_document
+from .validation import validate_document
+from .version import GODOT_TARGET, TOOL_VERSION
+
+
+def _godot_command() -> str | None:
+    configured = os.environ.get("VFXFORGE_GODOT")
+    if configured and Path(configured).exists():
+        return configured
+    for candidate in ("godot", "godot4"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
+def _texture_refs(document: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    dependencies = document.get("dependencies", {})
+    if isinstance(dependencies, dict):
+        for reference in dependencies.get("textures", []):
+            if isinstance(reference, str) and reference:
+                refs.add(reference)
+    for layer in document.get("layers", []):
+        if not isinstance(layer, dict):
+            continue
+        for container in (layer.get("properties", {}), layer.get("material", {})):
+            if isinstance(container, dict):
+                reference = container.get("texture")
+                if isinstance(reference, str) and reference:
+                    refs.add(reference)
+    return refs
+
+
+def _mesh_refs(document: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    dependencies = document.get("dependencies", {})
+    if isinstance(dependencies, dict):
+        for reference in dependencies.get("meshes", []):
+            if isinstance(reference, str) and reference:
+                refs.add(reference)
+    for layer in document.get("layers", []):
+        if not isinstance(layer, dict):
+            continue
+        properties = layer.get("properties", {})
+        if isinstance(properties, dict):
+            reference = properties.get("mesh_asset")
+            if isinstance(reference, str) and reference:
+                refs.add(reference)
+    return refs
+
+
+def _effect_refs(document: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    dependencies = document.get("dependencies", {})
+    if isinstance(dependencies, dict):
+        for reference in dependencies.get("effects", []):
+            if isinstance(reference, str) and reference:
+                refs.add(reference)
+    for layer in document.get("layers", []):
+        if isinstance(layer, dict) and layer.get("type") == "child_effect":
+            reference = layer.get("properties", {}).get("effect_id")
+            if isinstance(reference, str) and reference:
+                refs.add(reference)
+    return refs
+
+
+def _resolve_effect_source(reference: str, base_dir: Path) -> Path | None:
+    candidate = (base_dir / reference.removeprefix("res://")).resolve()
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    if candidate.suffix == "":
+        candidate = candidate.with_suffix(".vfx.json")
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    for path in sorted(base_dir.rglob("*.vfx.json")):
+        try:
+            if read_document(path).get("id") == reference:
+                return path.resolve()
+        except Exception:
+            continue
+    return None
+
+
+def _replace_refs(value: Any, replacements: dict[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {key: _replace_refs(item, replacements) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_replace_refs(item, replacements) for item in value]
+    if isinstance(value, str):
+        return replacements.get(value, value)
+    return value
+
+
+def _escaped_document_string(document: dict[str, Any]) -> str:
+    serialized = json.dumps(document, separators=(",", ":"), ensure_ascii=False)
+    return serialized.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+
+
+def _write_generated_script(destination: Path, document: dict[str, Any]) -> None:
+    script = f'''extends "res://vfx_runtime.gd"
+
+const DOCUMENT_JSON: String = "{_escaped_document_string(document)}"
+
+func _ready() -> void:
+    var parsed: Variant = JSON.parse_string(DOCUMENT_JSON)
+    if parsed is Dictionary:
+        set_document(parsed)
+        play()
+'''
+    destination.write_text(script, encoding="utf-8")
+
+
+def _write_project_file(destination: Path) -> None:
+    project = """[application]
+config/name="VFX Forge Export Smoke"
+run/main_scene="res://effect.tscn"
+
+[display]
+window/size/viewport_width=512
+window/size/viewport_height=512
+window/size/window_width_override=512
+window/size/window_height_override=512
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.035, 0.045, 0.07, 1)
+"""
+    destination.write_text(project, encoding="utf-8")
+
+
+def _write_tscn(destination: Path) -> None:
+    scene = """[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://effect.gd" id="1_effect"]
+
+[node name="VFXEffect" type="Node3D"]
+script = ExtResource("1_effect")
+"""
+    destination.write_text(scene, encoding="utf-8")
+
+
+def _write_smoke_script(destination: Path) -> None:
+    script = """extends SceneTree
+
+func _fail(message: String) -> void:
+    push_error(message)
+    quit(4)
+
+func _initialize() -> void:
+    var scene: PackedScene = load("res://effect.tscn")
+    if scene == null:
+        push_error("VFX Forge export smoke test could not load effect.tscn")
+        quit(2)
+        return
+    var instance: Node = scene.instantiate()
+    root.add_child(instance)
+    await process_frame
+    await process_frame
+    if not is_instance_valid(instance):
+        quit(3)
+        return
+
+    var document_file := FileAccess.open("res://document.vfx.json", FileAccess.READ)
+    if document_file != null:
+        var parsed: Variant = JSON.parse_string(document_file.get_as_text())
+        if parsed is Dictionary and parsed.get("layers", []) is Array:
+            for layer_variant in parsed.get("layers", []):
+                if not layer_variant is Dictionary:
+                    continue
+                var layer: Dictionary = layer_variant
+                var properties: Dictionary = layer.get("properties", {}) if layer.get("properties", {}) is Dictionary else {}
+                var mesh_reference := str(properties.get("mesh_asset", ""))
+                if mesh_reference.is_empty():
+                    continue
+                var layer_node := instance.get_node_or_null(str(layer.get("id", "")))
+                if layer_node == null:
+                    _fail("Custom mesh layer node is missing: " + str(layer.get("id", "")))
+                    return
+                var mesh: Mesh = null
+                if layer.get("type", "") == "mesh_particle" and layer_node is GPUParticles3D:
+                    mesh = (layer_node as GPUParticles3D).draw_pass_1
+                elif layer_node is MeshInstance3D:
+                    mesh = (layer_node as MeshInstance3D).mesh
+                if mesh == null or mesh.get_surface_count() == 0:
+                    _fail("Custom mesh did not import or instantiate: " + mesh_reference)
+                    return
+        else:
+            _fail("Exported document.vfx.json is not a valid dictionary")
+            return
+    quit(0)
+"""
+    destination.write_text(script, encoding="utf-8")
+
+
+def _manifest(root: Path) -> list[dict[str, Any]]:
+    entries = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name in {"export_manifest.json", "smoke_test.gd"} or ".godot" in path.relative_to(root).parts:
+            continue
+        relative = path.relative_to(root).as_posix()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        entries.append({"path": relative, "sha256": digest, "bytes": path.stat().st_size})
+    return entries
+
+
+def _run_godot_smoke(output: Path) -> dict[str, Any]:
+    command = _godot_command()
+    if command is None:
+        return {
+            "status": "skipped",
+            "reason": "Godot 4.x was not found on PATH. Set VFXFORGE_GODOT to a Godot executable to run the clean-project smoke test.",
+        }
+    smoke_script = output / "smoke_test.gd"
+    cache_directory = output / ".godot"
+    had_cache = cache_directory.exists()
+    existing_uids = {path for path in output.rglob("*.uid")}
+    _write_smoke_script(smoke_script)
+    try:
+        import_result = subprocess.run(
+            [command, "--headless", "--editor", "--path", str(output), "--quit"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        import_output = f"{import_result.stdout}\n{import_result.stderr}"
+        if import_result.returncode != 0 or "SCRIPT ERROR" in import_output or "Parse Error" in import_output or "ERROR:" in import_output:
+            return {
+                "status": "failed",
+                "phase": "asset_import",
+                "returncode": import_result.returncode,
+                "stdout": import_result.stdout[-4000:],
+                "stderr": import_result.stderr[-4000:],
+            }
+        result = subprocess.run(
+            [command, "--headless", "--path", str(output), "--script", "res://smoke_test.gd"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "failed", "reason": str(exc)}
+    finally:
+        smoke_script.unlink(missing_ok=True)
+        smoke_uid = output / "smoke_test.gd.uid"
+        if smoke_uid not in existing_uids:
+            smoke_uid.unlink(missing_ok=True)
+        for uid_path in output.rglob("*.uid"):
+            if uid_path not in existing_uids:
+                uid_path.unlink(missing_ok=True)
+        if not had_cache and cache_directory.exists():
+            shutil.rmtree(cache_directory, ignore_errors=True)
+    combined_output = f"{result.stdout}\n{result.stderr}"
+    if result.returncode != 0 or "SCRIPT ERROR" in combined_output or "Compile Error" in combined_output or "Parse Error" in combined_output or "ERROR:" in combined_output or "No loader found" in combined_output:
+        return {
+            "status": "failed",
+            "returncode": result.returncode,
+            "stdout": result.stdout[-4000:],
+            "stderr": result.stderr[-4000:],
+        }
+    return {"status": "passed", "godot": command, "stdout": result.stdout[-1000:], "stderr": result.stderr[-1000:]}
+
+
+def export_document(
+    document: dict[str, Any],
+    source_path: str | Path,
+    output: str | Path,
+    run_smoke_test: bool = True,
+) -> dict[str, Any]:
+    """Export normal Godot content with relative dependencies and a manifest."""
+    source = Path(source_path).resolve()
+    project_dir = source.parent
+    validation = validate_document(document, project_dir)
+    if not validation["valid"]:
+        raise ExportError(
+            "Export blocked by validation errors. Fix the reported fields first.",
+            "EXPORT_VALIDATION_FAILED",
+            str(source),
+        )
+    destination = Path(output).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "materials").mkdir(exist_ok=True)
+    (destination / "shaders").mkdir(exist_ok=True)
+    (destination / "textures").mkdir(exist_ok=True)
+    (destination / "meshes").mkdir(exist_ok=True)
+
+    exported_document = deepcopy(document)
+    copied_effects: list[str] = []
+    effect_replacements: dict[str, str] = {}
+    effect_documents: dict[str, dict[str, Any]] = {}
+    pending_effects = sorted(_effect_refs(document))
+    effect_dir = destination / "effects"
+    effect_dir.mkdir(exist_ok=True)
+    while pending_effects:
+        reference = pending_effects.pop(0)
+        if reference in effect_replacements:
+            continue
+        effect_source = _resolve_effect_source(reference, project_dir)
+        if effect_source is None:
+            raise ExportError(f"Child effect dependency is missing: {reference}", "MISSING_EFFECT", reference)
+        child_document = read_document(effect_source)
+        target_name = effect_source.name
+        target = effect_dir / target_name
+        if target.exists() and target.read_bytes() != json.dumps(child_document, indent=2).encode("utf-8"):
+            target_name = f"{effect_source.stem}_{hashlib.sha1(reference.encode()).hexdigest()[:8]}{effect_source.suffix}"
+        relative = f"effects/{target_name}"
+        effect_replacements[reference] = relative
+        effect_documents[reference] = child_document
+        pending_effects.extend(sorted(_effect_refs(child_document)))
+        copied_effects.append(relative)
+
+    all_documents = [document, *effect_documents.values()]
+    texture_replacements: dict[str, str] = {}
+    mesh_replacements: dict[str, str] = {}
+    copied_files: list[str] = []
+    copied_meshes: list[str] = []
+
+    def copy_asset(reference: str, folder: str, replacements: dict[str, str], copied: list[str], kind: str) -> None:
+        source_asset = (project_dir / reference.removeprefix("res://")).resolve()
+        try:
+            source_asset.relative_to(project_dir)
+        except ValueError as exc:
+            raise ExportError(f"{kind} reference escapes the project: {reference}", f"{kind.upper()}_OUTSIDE_PROJECT") from exc
+        if not source_asset.exists() or not source_asset.is_file():
+            raise ExportError(f"{kind} dependency is missing: {reference}", f"MISSING_{kind.upper()}", reference)
+        target_name = source_asset.name
+        target = destination / folder / target_name
+        if target.exists() and target.read_bytes() != source_asset.read_bytes():
+            target_name = f"{source_asset.stem}_{hashlib.sha1(reference.encode()).hexdigest()[:8]}{source_asset.suffix}"
+            target = destination / folder / target_name
+        if not target.exists():
+            shutil.copy2(source_asset, target)
+        relative = f"{folder}/{target_name}"
+        replacements[reference] = relative
+        if relative not in copied:
+            copied.append(relative)
+
+    for reference in sorted({item for item in all_documents for item in _texture_refs(item)}):
+        copy_asset(reference, "textures", texture_replacements, copied_files, "texture")
+    for reference in sorted({item for item in all_documents for item in _mesh_refs(item)}):
+        copy_asset(reference, "meshes", mesh_replacements, copied_meshes, "mesh")
+
+    exported_document = _replace_refs(_replace_refs(exported_document, texture_replacements), mesh_replacements)
+    for reference, child_document in effect_documents.items():
+        rewritten_child = _replace_refs(
+            _replace_refs(_replace_refs(child_document, texture_replacements), mesh_replacements),
+            effect_replacements,
+        )
+        target = destination / effect_replacements[reference]
+        target.write_text(json.dumps(rewritten_child, indent=2) + "\n", encoding="utf-8")
+    exported_document = _replace_refs(exported_document, effect_replacements)
+
+    runtime_source = Path(__file__).resolve().parents[1] / "godot" / "runtime" / "vfx_runtime.gd"
+    trail_source = Path(__file__).resolve().parents[1] / "godot" / "runtime" / "vfx_trail.gd"
+    if not runtime_source.exists():
+        raise ExportError("The Godot runtime source is missing from the repository.", "RUNTIME_SOURCE_MISSING", str(runtime_source))
+    if not trail_source.exists():
+        raise ExportError("The Godot trail runtime source is missing from the repository.", "TRAIL_SOURCE_MISSING", str(trail_source))
+    shutil.copy2(runtime_source, destination / "vfx_runtime.gd")
+    trail_destination = destination / "godot" / "runtime"
+    trail_destination.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(trail_source, trail_destination / "vfx_trail.gd")
+    _write_generated_script(destination / "effect.gd", exported_document)
+    _write_tscn(destination / "effect.tscn")
+    _write_project_file(destination / "project.godot")
+    (destination / "shaders" / "vfx_unlit.gdshader").write_text(
+        """shader_type spatial;
+render_mode unshaded, cull_disabled, depth_draw_always, blend_add;
+
+uniform vec4 tint : source_color = vec4(1.0);
+uniform float emissive_intensity = 1.0;
+
+void fragment() {
+    ALBEDO = tint.rgb;
+    ALPHA = tint.a;
+    EMISSION = tint.rgb * emissive_intensity;
+}
+""",
+        encoding="utf-8",
+    )
+    (destination / "materials" / "README.md").write_text(
+        "Generated VFX Forge material resources. The runtime applies constrained VFX material settings per layer.\n",
+        encoding="utf-8",
+    )
+    if document.get("export", {}).get("include_metadata", True):
+        (destination / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "vfxforge_version": TOOL_VERSION,
+                    "schema_version": document.get("schema_version"),
+                    "godot_target": GODOT_TARGET,
+                    "source_document": source.name,
+                    "document": exported_document,
+                    "validation": validation,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    (destination / "document.vfx.json").write_text(json.dumps(exported_document, indent=2) + "\n", encoding="utf-8")
+    smoke = _run_godot_smoke(destination) if run_smoke_test else {"status": "not_requested"}
+    files = _manifest(destination)
+    manifest = {
+        "manifest_version": 1,
+        "vfxforge_version": TOOL_VERSION,
+        "schema_version": document.get("schema_version"),
+        "godot_target": GODOT_TARGET,
+        "effect_id": document.get("id"),
+        "entry_scene": "effect.tscn",
+        "files": files,
+        "copied_textures": copied_files,
+        "copied_meshes": copied_meshes,
+        "copied_effects": copied_effects,
+        "validation": validation,
+        "smoke_test": smoke,
+    }
+    (destination / "export_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return {
+        "output": str(destination),
+        "entry_scene": str(destination / "effect.tscn"),
+        "manifest": str(destination / "export_manifest.json"),
+        "copied_textures": copied_files,
+        "copied_meshes": copied_meshes,
+        "copied_effects": copied_effects,
+        "validation": validation,
+        "smoke_test": smoke,
+        "files": files,
+    }
+
+
+def export_file(source: str | Path, output: str | Path, run_smoke_test: bool = True) -> dict[str, Any]:
+    source_path = Path(source)
+    document = read_document(source_path)
+    return export_document(document, source_path, output, run_smoke_test=run_smoke_test)
