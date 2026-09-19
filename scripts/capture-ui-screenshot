@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+OUTPUT="${1:-$ROOT/docs/assets/vfx-forge-ui.png}"
+mkdir -p "$(dirname -- "$OUTPUT")"
+
+GODOT_BIN="$(printenv VFXFORGE_GODOT 2>/dev/null || true)"
+if [[ -z "$GODOT_BIN" ]]; then
+  if command -v godot >/dev/null 2>&1; then
+    GODOT_BIN="$(command -v godot)"
+  elif command -v godot4 >/dev/null 2>&1; then
+    GODOT_BIN="$(command -v godot4)"
+  elif [[ -x "$ROOT/.tools/godot/Godot_v4.7.2-stable_linux.x86_64" ]]; then
+    GODOT_BIN="$ROOT/.tools/godot/Godot_v4.7.2-stable_linux.x86_64"
+  fi
+fi
+
+if [[ -z "$GODOT_BIN" ]]; then
+  echo "Godot 4.x is required to capture the UI screenshot." >&2
+  exit 1
+fi
+
+LOG_PATH="$ROOT/build/quality/gui-screenshot.log"
+mkdir -p "$(dirname -- "$LOG_PATH")"
+
+GODOT_ARGS=(
+  --path "$ROOT"
+  --display-driver x11
+  --rendering-method gl_compatibility
+  --audio-driver Dummy
+  --disable-vsync
+  --script "res://tests/e2e/gui_screenshot.gd"
+  --
+  --screenshot "$OUTPUT"
+)
+
+if [[ -n "${DISPLAY:-}" ]]; then
+  "$GODOT_BIN" "${GODOT_ARGS[@]}" > "$LOG_PATH" 2>&1
+elif command -v xvfb-run >/dev/null 2>&1; then
+  xvfb-run -a "$GODOT_BIN" "${GODOT_ARGS[@]}" > "$LOG_PATH" 2>&1
+else
+  echo "DISPLAY is unset and xvfb-run is unavailable." >&2
+  exit 1
+fi
+
+if ! grep -q "GUI_SCREENSHOT_PASS" "$LOG_PATH"; then
+  echo "UI screenshot capture failed. Log:" >&2
+  tail -n 80 "$LOG_PATH" >&2 || true
+  exit 1
+fi
+
+echo "Saved UI screenshot to $OUTPUT"
