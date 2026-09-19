@@ -28,7 +28,7 @@ class SchemaContractTests(unittest.TestCase):
                 validate_file(path, "vfx.policy.schema.json")
 
     def test_every_example_request_validates(self) -> None:
-        for path in sorted((ROOT / "examples" / "requests").glob("*.json")):
+        for path in sorted((ROOT / "examples" / "requests").glob("*.vfxrequest.json")):
             with self.subTest(path=path.name):
                 validate_file(path, "vfx.request.schema.json")
 

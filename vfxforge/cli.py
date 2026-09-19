@@ -148,6 +148,7 @@ def _parser() -> CLIParser:
     forge_cmd.add_argument("--export-mode", choices=["standalone", "library"], default="standalone")
     forge_cmd.add_argument("--resource-root", default=None)
     forge_cmd.add_argument("--shared-runtime", default=None, help="Shared runtime script path for library export.")
+    forge_cmd.add_argument("--asset-root", default=None, help="Host/project asset root used for policy and generation identity.")
     forge_cmd.add_argument("--allow-replace", action="store_true")
 
     plan_cmd = sub.add_parser("plan", help="Resolve recipe and mappings without promoting assets.")
@@ -584,6 +585,7 @@ def _cmd_forge(args: argparse.Namespace) -> dict[str, Any]:
         resource_root=args.resource_root,
         shared_runtime_path=args.shared_runtime,
         allow_replace=args.allow_replace,
+        asset_root=args.asset_root,
     )
     envelope = _envelope("forge")
     envelope["success"] = result.get("production_ready", False)

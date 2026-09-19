@@ -393,9 +393,9 @@ func _update_runtime(time: float) -> void:
         var layer: Dictionary = layer_variant
         var layer_id := str(layer.get("id", ""))
         var start: float = float(layer.get("start", 0.0))
-        var layer_duration: float = max(0.001, float(layer.get("duration", duration)))
+        var layer_duration: float = maxf(0.001, float(layer.get("duration", duration)))
         var local: float = time - start
-        var active: bool = local >= 0.0 and local <= layer_duration
+        var active: bool = local + 0.0001 >= 0.0 and local <= layer_duration + 0.0001
         var solo_ok: bool = editor_solo_layer_id.is_empty() or editor_solo_layer_id == layer_id
         node.visible = active and solo_ok
         if not active:

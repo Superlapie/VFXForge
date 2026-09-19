@@ -670,8 +670,8 @@ def validate_document(
                 if finite_number(segments) and float(segments) > profile["max_beam_segments"]:
                     errors.append(issue("error", "BEAM_SEGMENT_LIMIT", f"layers[{index}].properties.segments", f"Beam segments exceed policy limit ({profile['max_beam_segments']}).", value=segments))
         max_texture_dimension = int(profile.get("max_texture_dimension", 0) or 0)
+        texture_refs: list[tuple[str, Any]] = []
         if max_texture_dimension > 0:
-            texture_paths: set[str] = set()
             for index, layer in enumerate(layers):
                 if not isinstance(layer, dict):
                     continue
@@ -679,36 +679,47 @@ def validate_document(
                 material = layer.get("material", {})
                 properties = layer.get("properties", {})
                 if isinstance(material, dict) and material.get("texture"):
-                    texture_paths.add(f"{path}.material.texture")
-                    _check_texture_ref(
-                        material.get("texture"),
-                        f"{path}.material.texture",
-                        project,
-                        errors,
-                        max_dimension=max_texture_dimension,
-                        require_inspectable=True,
-                    )
+                    texture_refs.append((f"{path}.material.texture", material.get("texture")))
                 if isinstance(properties, dict) and properties.get("texture"):
-                    _check_texture_ref(
-                        properties.get("texture"),
-                        f"{path}.properties.texture",
-                        project,
-                        errors,
-                        max_dimension=max_texture_dimension,
-                        require_inspectable=True,
-                    )
+                    texture_refs.append((f"{path}.properties.texture", properties.get("texture")))
             if isinstance(dependencies, dict):
                 for index, reference in enumerate(dependencies.get("textures", [])):
+                    if reference:
+                        texture_refs.append((f"dependencies.textures[{index}]", reference))
+            if texture_refs and project is None:
+                errors.append(
+                    issue(
+                        "error",
+                        "TEXTURE_DIMENSION_UNVERIFIED",
+                        "dependencies.textures",
+                        "Texture dimensions cannot be inspected without a project/asset root.",
+                    )
+                )
+            else:
+                for path, reference in texture_refs:
                     _check_texture_ref(
                         reference,
-                        f"dependencies.textures[{index}]",
+                        path,
                         project,
                         errors,
                         max_dimension=max_texture_dimension,
-                        require_inspectable=bool(reference),
+                        require_inspectable=True,
                     )
         max_child_depth = int(profile.get("max_child_effect_depth", 0) or 0)
-        if max_child_depth > 0 and project is not None:
+        child_layers = [
+            layer for layer in layers
+            if isinstance(layer, dict) and layer.get("type") == "child_effect" and _effect_reference(layer)
+        ]
+        if max_child_depth > 0 and child_layers and project is None:
+            errors.append(
+                issue(
+                    "error",
+                    "CHILD_EFFECT_DEPTH_UNVERIFIED",
+                    "dependencies.effects",
+                    "Child-effect depth cannot be inspected without a project/asset root.",
+                )
+            )
+        elif max_child_depth > 0 and project is not None:
             depth = _max_child_effect_depth(root, project)
             if depth > max_child_depth:
                 errors.append(

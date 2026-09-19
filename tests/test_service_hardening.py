@@ -9,12 +9,16 @@ import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
-from vfxforge.model import set_path
+from PIL import Image
+
+from vfxforge.model import set_path, write_document
 from vfxforge.presets import make_preset
+from vfxforge.schema import LAYER_DEFAULTS, default_document
 from vfxforge.service.autocorrect import autocorrect_document
 from vfxforge.service.compiler import compile_recipe
-from vfxforge.service.pipeline import forge, plan
+from vfxforge.service.pipeline import forge, plan, validate_compiled_effect
 from vfxforge.service.policy import load_policy
 from vfxforge.service.promotion import generation_digest, promote_candidate, request_hash
 from vfxforge.service.request import normalize_request, validate_request
@@ -160,15 +164,119 @@ class SecurityAndDigestTests(unittest.TestCase):
         digest_b = generation_digest(request, recipe_b, policy)
         self.assertNotEqual(digest_a, digest_b)
 
-    def test_generation_digest_changes_with_asset(self) -> None:
+    def test_generation_digest_changes_with_asset_bytes(self) -> None:
         request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
         policy = load_policy("default")
+        recipe = json.loads(json.dumps(load_recipe("impact.fire")))
+        for layer in recipe["document"]["layers"]:
+            if layer.get("id") == "scorch":
+                layer["properties"]["texture"] = "probe.png"
+                break
+        recipe["document"].setdefault("dependencies", {})["textures"] = ["probe.png"]
+        with tempfile.TemporaryDirectory() as tmp:
+            asset_root = Path(tmp)
+            probe = asset_root / "probe.png"
+            Image.new("RGBA", (8, 8), (255, 0, 0, 255)).save(probe)
+            digest_a = generation_digest(request, recipe, policy, asset_root=asset_root)
+            Image.new("RGBA", (8, 8), (0, 255, 0, 255)).save(probe)
+            digest_b = generation_digest(request, recipe, policy, asset_root=asset_root)
+            self.assertNotEqual(digest_a, digest_b)
+            catalog = {"probe.png": str(probe)}
+            digest_c = generation_digest(request, recipe, policy, asset_root=None, asset_catalog=catalog)
+            self.assertEqual(digest_b, digest_c)
+
+
+class PolicyAssetLimitTests(unittest.TestCase):
+    def test_oversized_texture_fails_service_validation_and_forge(self) -> None:
+        request = _read_request("fire_impact.vfxrequest.json")
+        policy = load_policy("enigma")
         recipe = load_recipe("impact.fire")
-        digest_a = generation_digest(request, recipe, policy)
-        mutated = json.loads(json.dumps(recipe))
-        mutated.setdefault("document", {}).setdefault("dependencies", {}).setdefault("textures", []).append("examples/assets/textures/nonexistent_probe.png")
-        digest_b = generation_digest(request, mutated, policy)
-        self.assertNotEqual(digest_a, digest_b)
+        with tempfile.TemporaryDirectory() as tmp:
+            asset_root = Path(tmp)
+            huge = asset_root / "huge.png"
+            Image.new("RGBA", (2048, 16), (255, 0, 0, 255)).save(huge)
+            compiled = compile_recipe(normalize_request(request), recipe, policy)
+            for layer in compiled["layers"]:
+                if layer.get("id") == "scorch":
+                    layer["properties"]["texture"] = "huge.png"
+                    break
+            compiled.setdefault("dependencies", {})["textures"] = ["huge.png"]
+            validation = validate_compiled_effect(compiled, policy, "normal_combat", asset_root)
+            self.assertFalse(validation["valid"])
+            self.assertTrue(any(item["code"] == "TEXTURE_DIMENSION_EXCEEDED" for item in validation["errors"]))
+
+            original = compile_recipe
+
+            def inject(*args, **kwargs):
+                document = original(*args, **kwargs)
+                for layer in document["layers"]:
+                    if layer.get("id") == "scorch":
+                        layer["properties"]["texture"] = "huge.png"
+                        break
+                document.setdefault("dependencies", {})["textures"] = ["huge.png"]
+                return document
+
+            with patch("vfxforge.service.pipeline.compile_recipe", side_effect=inject):
+                result = forge(request, policy_id="enigma", workspace=asset_root / "ws", export=True, asset_root=asset_root)
+            self.assertFalse(result["production_ready"])
+            self.assertTrue(any(item["code"] == "TEXTURE_DIMENSION_EXCEEDED" for item in result.get("errors", [])))
+
+    def test_uninspectable_texture_is_not_production_ready(self) -> None:
+        request = _read_request("fire_impact.vfxrequest.json")
+        policy = load_policy("enigma")
+        recipe = load_recipe("impact.fire")
+        with tempfile.TemporaryDirectory() as tmp:
+            asset_root = Path(tmp)
+            (asset_root / "broken.png").write_bytes(b"not-an-image")
+            compiled = compile_recipe(normalize_request(request), recipe, policy)
+            for layer in compiled["layers"]:
+                if layer.get("id") == "scorch":
+                    layer["properties"]["texture"] = "broken.png"
+                    break
+            compiled.setdefault("dependencies", {})["textures"] = ["broken.png"]
+            validation = validate_compiled_effect(compiled, policy, "normal_combat", asset_root)
+            self.assertFalse(validation["valid"])
+            self.assertTrue(any(item["code"] == "TEXTURE_DIMENSION_UNVERIFIED" for item in validation["errors"]))
+
+    def test_child_effect_depth_policy(self) -> None:
+        policy = load_policy("enigma")
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            chain = ["root_fx", "child_a", "child_b", "child_c", "child_d"]
+            for index, effect_id in enumerate(chain):
+                document = default_document(effect_id, duration=0.5)
+                if index + 1 < len(chain):
+                    child = deepcopy(LAYER_DEFAULTS["child_effect"])
+                    child["id"] = f"child_{index}"
+                    child["type"] = "child_effect"
+                    child["name"] = "Child"
+                    child["enabled"] = True
+                    child["start"] = 0.0
+                    child["duration"] = 0.5
+                    child["properties"]["effect_id"] = chain[index + 1]
+                    document["layers"] = [child]
+                    document["dependencies"]["effects"] = [chain[index + 1]]
+                write_document(project / f"{effect_id}.vfx.json", document)
+            deep = json.loads((project / "root_fx.vfx.json").read_text(encoding="utf-8"))
+            validation = validate_compiled_effect(deep, policy, "normal_combat", project)
+            self.assertFalse(validation["valid"])
+            self.assertTrue(any(item["code"] == "CHILD_EFFECT_DEPTH_EXCEEDED" for item in validation["errors"]))
+
+            shallow = default_document("parent_ok", duration=0.5)
+            child = deepcopy(LAYER_DEFAULTS["child_effect"])
+            child["id"] = "leaf"
+            child["type"] = "child_effect"
+            child["name"] = "Leaf"
+            child["enabled"] = True
+            child["start"] = 0.0
+            child["duration"] = 0.5
+            child["properties"]["effect_id"] = "leaf_fx"
+            shallow["layers"] = [child]
+            shallow["dependencies"]["effects"] = ["leaf_fx"]
+            write_document(project / "parent_ok.vfx.json", shallow)
+            write_document(project / "leaf_fx.vfx.json", default_document("leaf_fx", duration=0.5))
+            ok = validate_compiled_effect(shallow, policy, "normal_combat", project)
+            self.assertTrue(ok["valid"], ok.get("errors"))
 
 
 class ConcurrencyTests(unittest.TestCase):

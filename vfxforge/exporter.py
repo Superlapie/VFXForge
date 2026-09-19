@@ -297,6 +297,20 @@ def _run_godot_smoke(output: Path) -> dict[str, Any]:
     return {"status": "passed", "godot": command, "stdout": result.stdout[-1000:], "stderr": result.stderr[-1000:]}
 
 
+def _lifecycle_checkpoints(document: dict[str, Any]) -> list[float]:
+    duration = max(float(document.get("duration", 1.0)), 0.001)
+    samples = {0.0, duration * 0.25, duration * 0.5, duration * 0.75, duration}
+    timeline = document.get("timeline", {})
+    if isinstance(timeline, dict):
+        for event in timeline.get("events", []):
+            if isinstance(event, dict) and isinstance(event.get("time"), (int, float)):
+                samples.add(float(event["time"]))
+    for layer in document.get("layers", []):
+        if isinstance(layer, dict) and layer.get("type") == "event_marker" and isinstance(layer.get("start"), (int, float)):
+            samples.add(float(layer["start"]))
+    return sorted({min(max(0.0, value), duration) for value in samples})
+
+
 def _run_host_library_smoke(output: Path, resource_root: str, shared_runtime_path: str | None) -> dict[str, Any]:
     command = _godot_command()
     if command is None:
@@ -327,12 +341,15 @@ def _run_host_library_smoke(output: Path, resource_root: str, shared_runtime_pat
                 f'trail_script_path: String = "{shared_runtime_path.rsplit("/", 1)[0]}/vfx_trail.gd"',
             )
             runtime_dst.write_text(runtime_text, encoding="utf-8")
+        document_payload = json.loads((output / "document.vfx.json").read_text(encoding="utf-8"))
         smoke_config = {
             "resource_root": resource_root,
-            "frame_count": 30,
+            "duration": float(document_payload.get("duration", 1.0)),
+            "loop": bool(document_payload.get("loop", False)),
+            "checkpoints": _lifecycle_checkpoints(document_payload),
             "enabled_layers": [
                 str(layer.get("id"))
-                for layer in json.loads((output / "document.vfx.json").read_text(encoding="utf-8")).get("layers", [])
+                for layer in document_payload.get("layers", [])
                 if isinstance(layer, dict) and layer.get("enabled", True) and layer.get("type") in {
                     "particle", "mesh_particle", "sprite", "light", "trail", "beam", "decal", "mesh_effect", "child_effect"
                 }
@@ -369,7 +386,7 @@ def _run_host_library_smoke(output: Path, resource_root: str, shared_runtime_pat
         combined = f"{result.stdout}\n{result.stderr}"
         if result.returncode != 0 or "HOST_LIBRARY_SMOKE" in combined or "ERROR:" in combined:
             return {"status": "failed", "returncode": result.returncode, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:]}
-        return {"status": "passed", "godot": command, "resource_root": resource_root}
+        return {"status": "passed", "godot": command, "resource_root": resource_root, "checkpoints": smoke_config["checkpoints"]}
 
 
 def export_document(
@@ -380,6 +397,8 @@ def export_document(
     mode: str = "standalone",
     resource_root: str | None = None,
     shared_runtime_path: str | None = None,
+    policy_ceilings: dict[str, Any] | None = None,
+    project_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Export Godot content with relative dependencies and a manifest.
 
@@ -388,8 +407,13 @@ def export_document(
       library    - nested bundle for host projects without project.godot
     """
     source = Path(source_path).resolve()
-    project_dir = source.parent
-    validation = validate_document(document, project_dir)
+    resolved_project = Path(project_dir).resolve() if project_dir is not None else source.parent
+    validation = validate_document(
+        document,
+        resolved_project,
+        strict=policy_ceilings is not None,
+        policy_ceilings=policy_ceilings,
+    )
     if not validation["valid"]:
         raise ExportError(
             "Export blocked by validation errors. Fix the reported fields first.",
@@ -414,7 +438,7 @@ def export_document(
         reference = pending_effects.pop(0)
         if reference in effect_replacements:
             continue
-        effect_source = _resolve_effect_source(reference, project_dir)
+        effect_source = _resolve_effect_source(reference, resolved_project)
         if effect_source is None:
             raise ExportError(f"Child effect dependency is missing: {reference}", "MISSING_EFFECT", reference)
         child_document = read_document(effect_source)
@@ -435,9 +459,9 @@ def export_document(
     copied_meshes: list[str] = []
 
     def copy_asset(reference: str, folder: str, replacements: dict[str, str], copied: list[str], kind: str) -> None:
-        source_asset = (project_dir / reference.removeprefix("res://")).resolve()
+        source_asset = (resolved_project / reference.removeprefix("res://")).resolve()
         try:
-            source_asset.relative_to(project_dir)
+            source_asset.relative_to(resolved_project)
         except ValueError as exc:
             raise ExportError(f"{kind} reference escapes the project: {reference}", f"{kind.upper()}_OUTSIDE_PROJECT") from exc
         if not source_asset.exists() or not source_asset.is_file():

@@ -10,8 +10,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..resources import install_root
 from ..version import SCHEMA_VERSION, TOOL_VERSION
+from .assets import hash_assets
 from .paths import assert_safe_id
 
 
@@ -25,45 +25,16 @@ def request_hash(normalized_request: dict[str, Any]) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def _dependency_asset_hashes(recipe: dict[str, Any]) -> dict[str, str]:
-    hashes: dict[str, str] = {}
+def _dependency_asset_hashes(
+    recipe: dict[str, Any],
+    *,
+    asset_root: str | Path | None = None,
+    catalog: dict[str, str] | None = None,
+) -> dict[str, str]:
     document = recipe.get("document", {})
     if not isinstance(document, dict):
-        return hashes
-    root = install_root()
-    candidates: list[Path] = []
-    dependencies = document.get("dependencies", {})
-    if isinstance(dependencies, dict):
-        for key in ("textures", "meshes", "effects"):
-            for reference in dependencies.get(key, []):
-                if isinstance(reference, str) and reference:
-                    candidates.append(root / reference)
-                    candidates.append(root / "examples" / reference.removeprefix("examples/"))
-    for layer in document.get("layers", []):
-        if not isinstance(layer, dict):
-            continue
-        for container in (layer.get("properties", {}), layer.get("material", {})):
-            if isinstance(container, dict):
-                texture = container.get("texture")
-                if isinstance(texture, str) and texture:
-                    candidates.append(root / texture)
-                    candidates.append(root / "examples" / texture.removeprefix("examples/"))
-        properties = layer.get("properties", {})
-        if isinstance(properties, dict):
-            mesh = properties.get("mesh_asset")
-            if isinstance(mesh, str) and mesh:
-                candidates.append(root / mesh)
-                candidates.append(root / "examples" / mesh.removeprefix("examples/"))
-    seen: set[str] = set()
-    for path in candidates:
-        resolved = path.resolve()
-        key = str(resolved)
-        if key in seen or not resolved.is_file():
-            continue
-        seen.add(key)
-        relative = resolved.relative_to(root.resolve()) if str(resolved).startswith(str(root.resolve())) else resolved.name
-        hashes[str(relative).replace("\\", "/")] = hashlib.sha256(resolved.read_bytes()).hexdigest()
-    return dict(sorted(hashes.items()))
+        return {}
+    return hash_assets(document, asset_root=asset_root, catalog=catalog)
 
 
 def generation_digest(
@@ -73,8 +44,10 @@ def generation_digest(
     *,
     tool_version: str = TOOL_VERSION,
     schema_version: int = SCHEMA_VERSION,
+    asset_root: str | Path | None = None,
+    asset_catalog: dict[str, str] | None = None,
 ) -> str:
-    asset_hashes = _dependency_asset_hashes(recipe)
+    asset_hashes = _dependency_asset_hashes(recipe, asset_root=asset_root, catalog=asset_catalog)
     payload = {
         "request_hash": request_hash(normalized_request),
         "recipe_id": recipe.get("recipe_id"),

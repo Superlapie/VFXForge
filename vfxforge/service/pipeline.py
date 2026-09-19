@@ -75,6 +75,22 @@ def plan(raw_request: dict[str, Any], policy_id: str = "default") -> dict[str, A
     }
 
 
+def validate_compiled_effect(
+    document: dict[str, Any],
+    policy: dict[str, Any],
+    usage: str,
+    project_dir: str | Path | None,
+) -> dict[str, Any]:
+    ceilings = policy_ceilings(policy, usage)
+    return validate_document(
+        document,
+        project_dir=project_dir,
+        strict=True,
+        policy_ceilings=ceilings,
+        selected_budget=allowed_budget_profile(policy, usage),
+    )
+
+
 def forge(
     raw_request: dict[str, Any],
     *,
@@ -86,6 +102,8 @@ def forge(
     shared_runtime_path: str | None = None,
     allow_replace: bool = False,
     dry_run: bool = False,
+    asset_root: str | Path | None = None,
+    asset_catalog: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     document, errors = validate_request(raw_request)
     effect_id = str(raw_request.get("effect_id", "unknown"))
@@ -114,7 +132,13 @@ def forge(
             review_reasons=[{"code": "PRODUCTION_EXPORT_NOT_RUN", "message": "Policy requires export before production readiness."}],
         )
 
-    gen_digest = generation_digest(normalized, recipe, policy)
+    gen_digest = generation_digest(
+        normalized,
+        recipe,
+        policy,
+        asset_root=asset_root,
+        asset_catalog=asset_catalog,
+    )
     workspace_path = Path(workspace).resolve()
     job, job_id = create_job_workspace(workspace_path, effect_id, gen_digest)
     candidate_doc_path = job / "candidate" / f"{effect_id}.vfx.json"
@@ -133,12 +157,9 @@ def forge(
             corrections=corrections,
             review_reasons=correction_review,
         )
-    revalidation = validate_document(
-        corrected,
-        strict=True,
-        policy_ceilings=ceilings,
-        selected_budget=allowed_budget_profile(policy, usage),
-    )
+    write_document(candidate_doc_path, corrected)
+    project_dir = Path(asset_root).resolve() if asset_root else candidate_doc_path.parent
+    revalidation = validate_compiled_effect(corrected, policy, usage, project_dir)
     if not revalidation["valid"]:
         return make_result(
             ForgeStatus.FAILED,
@@ -151,7 +172,6 @@ def forge(
             validation=revalidation,
             errors=revalidation["errors"],
         )
-    write_document(candidate_doc_path, corrected)
     preview_cameras = policy.get("preview_cameras", ["mmo"])
     previews = render_preview_suite(corrected, job / "previews", preview_cameras)
     export_result: dict[str, Any] | None = None
@@ -167,6 +187,8 @@ def forge(
                 mode=export_mode,
                 resource_root=resource_root,
                 shared_runtime_path=shared_runtime_path,
+                policy_ceilings=ceilings,
+                project_dir=project_dir,
             )
             passed, runtime_validation, gate_code = _engine_gate_result(export_mode, export_result)
             if _policy_requires_engine(policy) and not passed:
@@ -209,6 +231,8 @@ def forge(
         export_mode=export_mode,
         resource_root=resource_root,
         shared_runtime_path=shared_runtime_path,
+        asset_root=asset_root,
+        asset_catalog=asset_catalog,
     )
     manifest_path = job / "forge_manifest.json"
     write_manifest(manifest_path, provenance_payload)

@@ -1,0 +1,17 @@
+{
+  "impact.fire": "fire_impact.vfxrequest.json",
+  "lightning.strike": "lightning_strike.vfxrequest.json",
+  "cloud.poison": "poison_cloud.vfxrequest.json",
+  "telegraph.circle": "ground_telegraph.vfxrequest.json",
+  "trail.projectile": "projectile_trail.vfxrequest.json",
+  "boss.line_sweep": "boss_line_sweep.vfxrequest.json",
+  "boss.eruption_2x2": "boss_eruption_2x2.vfxrequest.json",
+  "trail.weapon": "trail_weapon.vfxrequest.json",
+  "telegraph.line": "telegraph_line.vfxrequest.json",
+  "telegraph.rectangle": "telegraph_rectangle.vfxrequest.json",
+  "aura.healing": "aura_healing.vfxrequest.json",
+  "beam.lightning": "beam_lightning.vfxrequest.json",
+  "portal.standard": "portal_standard.vfxrequest.json",
+  "impact.neutral": "impact_neutral.vfxrequest.json",
+  "impact.dust": "impact_dust.vfxrequest.json"
+}

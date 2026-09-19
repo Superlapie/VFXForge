@@ -1,0 +1,17 @@
+{
+  "request_version": 1,
+  "effect_id": "combat_weapon_trail",
+  "intent": {
+    "kind": "weapon_trail",
+    "element": "arcane",
+    "purpose": "cosmetic",
+    "intensity": "standard"
+  },
+  "gameplay": {
+    "attachment": "weapon"
+  },
+  "context": {
+    "target": "enigma",
+    "usage": "normal_combat"
+  }
+}

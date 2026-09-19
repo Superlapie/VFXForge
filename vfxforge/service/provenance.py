@@ -32,6 +32,8 @@ def build_provenance(
     export_mode: str = "standalone",
     resource_root: str | None = None,
     shared_runtime_path: str | None = None,
+    asset_root: str | Path | None = None,
+    asset_catalog: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     policy_id = str(policy.get("policy_id", "default"))
     command_parts = [
@@ -47,7 +49,7 @@ def build_provenance(
     reproduction = {"command": " ".join(command_parts)}
     recipe_meta = recipe_ref(recipe)
     policy_meta = policy_ref(policy_id)
-    asset_hashes = _dependency_asset_hashes(recipe)
+    asset_hashes = _dependency_asset_hashes(recipe, asset_root=asset_root, catalog=asset_catalog)
     hashes: dict[str, Any] = {
         "request": request_digest,
         "generation": generation_digest,

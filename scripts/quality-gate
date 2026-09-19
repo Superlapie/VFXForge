@@ -21,7 +21,7 @@ if [[ -n "$GODOT_BIN" ]]; then
 fi
 
 echo "[1/11] Python model, CLI, renderer, and service tests"
-python3 -m unittest tests.test_model tests.test_cli tests.test_renderer_export tests.test_service tests.test_service_hardening tests.test_schema_contract -v
+python3 -m unittest tests.test_model tests.test_cli tests.test_renderer_export tests.test_service tests.test_service_hardening tests.test_schema_contract tests.test_service_matrix -v
 
 echo "[2/11] User-facing CLI, Godot export, and GUI E2E"
 python3 -m unittest tests.test_user_e2e -v
@@ -60,7 +60,7 @@ for path in sorted((root / 'recipes').glob('*.json')):
     validate_file(path, 'vfx.recipe.schema.json')
 for path in sorted((root / 'policies').glob('*.json')):
     validate_file(path, 'vfx.policy.schema.json')
-for path in sorted((root / 'examples' / 'requests').glob('*.json')):
+for path in sorted((root / 'examples' / 'requests').glob('*.vfxrequest.json')):
     validate_file(path, 'vfx.request.schema.json')
 print('JSON Schema validation OK')
 PY
@@ -74,6 +74,9 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 
+from vfxforge.service.matrix import iter_recipe_requests
+from vfxforge.service.pipeline import forge
+
 def load_cli(path):
     payload = json.loads(Path(path).read_text(encoding='utf-8'))
     return payload.get('data', payload)
@@ -83,17 +86,14 @@ boss = load_cli('build/quality/forge_boss_no_export.json')
 assert fire['production_ready'] is True, fire
 assert boss['production_ready'] is False, boss
 assert any(item.get('code') == 'PRODUCTION_EXPORT_NOT_RUN' for item in boss.get('review_reasons', [])), boss
-PY
 
-DEFAULT_CASES=(
-  "lightning_strike.vfxrequest.json"
-  "poison_cloud.vfxrequest.json"
-  "ground_telegraph.vfxrequest.json"
-  "projectile_trail.vfxrequest.json"
-)
-for case in "${DEFAULT_CASES[@]}"; do
-  python3 -m vfxforge.cli forge --request "examples/requests/$case" --policy default --workspace "$QUALITY_DIR/service/default_$case" --no-export --json > "$QUALITY_DIR/service/default_${case%.vfxrequest.json}.json"
-done
+quality = Path('build/quality/service')
+for recipe_id, request, _recipe in iter_recipe_requests():
+    result = forge(request, policy_id='default', workspace=quality / f'default_{recipe_id}', export=False)
+    assert result['production_ready'] is True, (recipe_id, result.get('status'), result.get('errors') or result.get('review_reasons'))
+    (quality / f'default_{recipe_id}.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+print('default recipe matrix OK')
+PY
 
 echo "[9/11] Enigma library production path"
 if [[ -z "$GODOT_BIN" ]]; then
@@ -101,36 +101,35 @@ if [[ -z "$GODOT_BIN" ]]; then
   exit 1
 fi
 
-mkdir -p "$QUALITY_DIR/service/enigma_library"
-SHARED_RUNTIME="res://generated/vfx/_runtime/vfx_runtime.gd"
-ENIGMA_CASES=(
-  "fire_impact:combat_fire_impact"
-  "lightning_strike:combat_lightning_strike"
-  "poison_cloud:combat_poison_cloud"
-  "ground_telegraph:boss_circle_tell"
-  "projectile_trail:combat_projectile_trail"
-  "boss_line_sweep:meridian_line_sweep"
-)
-for entry in "${ENIGMA_CASES[@]}"; do
-  request_file="${entry%%:*}.vfxrequest.json"
-  effect_id="${entry##*:}"
-  python3 -m vfxforge.cli forge \
-    --request "examples/requests/$request_file" \
-    --policy enigma \
-    --workspace "$QUALITY_DIR/service/enigma_library/$effect_id" \
-    --export-mode library \
-    --resource-root "res://generated/vfx/$effect_id" \
-    --shared-runtime "$SHARED_RUNTIME" \
-    --json > "$QUALITY_DIR/service/enigma_library/${effect_id}.json"
-  python3 - <<PY
+python3 - <<'PY'
 import json
 from pathlib import Path
-payload = json.loads(Path("$QUALITY_DIR/service/enigma_library/${effect_id}.json").read_text(encoding="utf-8")).get("data", {})
-assert payload.get("production_ready") is True, payload
-host = payload.get("export_validation", {}).get("host_smoke_test", {})
-assert host.get("status") == "passed", host
+
+from vfxforge.service.matrix import iter_recipe_requests
+from vfxforge.service.pipeline import forge
+
+quality = Path('build/quality/service/enigma_library')
+quality.mkdir(parents=True, exist_ok=True)
+for recipe_id, request, _recipe in iter_recipe_requests():
+    effect_id = request['effect_id']
+    result = forge(
+        request,
+        policy_id='enigma',
+        workspace=quality / effect_id,
+        export=True,
+        export_mode='library',
+        resource_root=f'res://generated/vfx/{effect_id}',
+        shared_runtime_path='res://generated/vfx/_runtime/vfx_runtime.gd',
+        allow_replace=True,
+    )
+    (quality / f'{effect_id}.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+    assert result.get('production_ready') is True, (recipe_id, result.get('status'), result.get('errors') or result.get('review_reasons'))
+    host = result.get('export_validation', {}).get('host_smoke_test', {})
+    assert host.get('status') == 'passed', (recipe_id, host)
+    checkpoints = host.get('checkpoints') or result.get('export_validation', {})
+    print(f'enigma library OK {recipe_id} ({effect_id})')
+print('enigma library matrix OK')
 PY
-done
 
 echo "[10/11] Wheel install smoke"
 python3 -m pip wheel "$ROOT" -w "$QUALITY_DIR/wheel" --no-deps -q

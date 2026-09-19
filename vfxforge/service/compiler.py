@@ -12,6 +12,21 @@ from .semantic import layer_semantic_roles
 
 def _set_path(document: dict[str, Any], dotted: str, value: Any) -> None:
     parts = dotted.split(".")
+    if parts and parts[0] == "layers" and len(parts) >= 3:
+        layer_id = parts[1]
+        for layer in document.get("layers", []):
+            if isinstance(layer, dict) and str(layer.get("id")) == layer_id:
+                current: Any = layer
+                for part in parts[2:-1]:
+                    if not isinstance(current, dict) or part not in current or not isinstance(current[part], dict):
+                        if not isinstance(current, dict):
+                            return
+                        current[part] = {}
+                    current = current[part]
+                if isinstance(current, dict):
+                    current[parts[-1]] = value
+                return
+        return
     current: Any = document
     for part in parts[:-1]:
         if part not in current or not isinstance(current[part], dict):
