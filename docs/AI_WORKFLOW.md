@@ -5,19 +5,22 @@ VFX Forge is designed for deterministic agent workflows. For production effect g
 ## Primary path: semantic forge
 
 ~~~
+vfxforge capabilities --policy enigma --json
 vfxforge plan --request examples/requests/fire_impact.vfxrequest.json --policy default --json
 vfxforge forge --request examples/requests/fire_impact.vfxrequest.json --policy enigma --workspace build/service --json
 vfxforge recipes list --json
+vfxforge recipes show boss.line_sweep --json
 vfxforge policies show enigma --json
 ~~~
 
 The service accepts a versioned semantic request (`*.vfxrequest.json`), selects a recipe deterministically, compiles gameplay semantics into a canonical document, validates under policy ceilings, autocorrects only optional layers, renders previews, exports when the policy requires it, and promotes managed production output.
 
-Use `--policy enigma` for Enigma-target effects. That policy requires export and engine validation before `production_ready=true`. `--no-export` must not be treated as production-ready under Enigma policy.
+Use `--policy enigma` for Enigma-target effects. That policy requires library export and host-project engine validation before `production_ready=true`. Agents do not need to pass `--export-mode library`; the policy supplies it. `--no-export` and `--export-mode standalone` must not be treated as production-ready under Enigma policy.
 
 ## Discover first
 
 ~~~
+vfxforge capabilities --policy enigma --json
 vfxforge explain --json
 vfxforge explain particle --json
 vfxforge schema --json

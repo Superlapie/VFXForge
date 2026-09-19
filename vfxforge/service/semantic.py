@@ -79,13 +79,15 @@ def validate_recipe_semantics(request: dict[str, Any], recipe: dict[str, Any], p
         for dotted in required:
             if request_lookup_path(request, dotted) is None:
                 reasons.append(_review("MISSING_REQUIRED_SEMANTIC", f"Recipe requires {dotted}.", path=dotted))
-    supported = set(recipe.get("supported_gameplay", recipe.get("consumed_gameplay", [])) or [])
-    consumed = set(recipe.get("consumed_gameplay", supported) or [])
+    supported = set(recipe.get("supported_gameplay") or [])
+    consumed = set(recipe.get("consumed_gameplay") or [])
+    allowed = supported | consumed
+    allow_extra = bool(recipe.get("allow_extra_gameplay", False))
     for key, value in request.get("gameplay", {}).items():
         if value is None:
             continue
         path = f"gameplay.{key}"
-        if supported and path not in supported and path not in consumed:
+        if not allow_extra and path not in allowed:
             reasons.append(_review("UNSUPPORTED_SEMANTIC_PARAMETER", f"Recipe does not consume {path}.", path=path))
     bounds = policy.get("semantic_bounds", {})
     gameplay = request.get("gameplay", {})

@@ -78,5 +78,42 @@ def policy_ceilings(policy: dict[str, Any], usage: str) -> dict[str, Any]:
     }
 
 
-def world_units_per_tile(policy: dict[str, Any]) -> float:
+def world_units_per_tile(policy: dict[str, Any], usage: str | None = None) -> float:
+    if usage:
+        limits = resolve_context_limits(policy, usage)
+        if "world_units_per_tile" in limits:
+            return float(limits["world_units_per_tile"])
     return float(policy.get("defaults", {}).get("world_units_per_tile", 1.0))
+
+
+def resolve_export_settings(
+    policy: dict[str, Any],
+    effect_id: str,
+    *,
+    export_mode: str | None = None,
+    resource_root: str | None = None,
+    shared_runtime_path: str | None = None,
+) -> dict[str, Any]:
+    runtime_gate = str(policy.get("runtime_gate") or "")
+    required_mode = policy.get("required_export_mode")
+    if not required_mode and runtime_gate == "host_project":
+        required_mode = "library"
+    mismatch = bool(required_mode and export_mode and export_mode != required_mode)
+    resolved_mode = export_mode or required_mode or "standalone"
+    template = str(policy.get("resource_root_template") or "res://generated/vfx/{effect_id}")
+    policy_shared = policy.get("shared_runtime_path")
+    resolved_root = resource_root
+    resolved_shared = shared_runtime_path
+    if resolved_mode == "library":
+        if not resolved_root:
+            resolved_root = template.format(effect_id=effect_id)
+        if not resolved_shared and isinstance(policy_shared, str) and policy_shared:
+            resolved_shared = policy_shared
+    return {
+        "export_mode": resolved_mode,
+        "resource_root": resolved_root,
+        "shared_runtime_path": resolved_shared,
+        "required_export_mode": required_mode,
+        "runtime_gate": runtime_gate or ("host_project" if resolved_mode == "library" else "standalone"),
+        "mismatch": mismatch,
+    }

@@ -25,6 +25,7 @@ include-package-data = true
 "share/vfxforge/policies" = ["policies/*.json"]
 "share/vfxforge/schema" = ["schema/*.json"]
 "share/vfxforge/godot/runtime" = ["godot/runtime/*.gd"]
+"share/vfxforge/godot/host_smoke" = ["godot/host_smoke/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

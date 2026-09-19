@@ -9,14 +9,58 @@
     "policy_id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,63}$"},
     "policy_version": {"type": "integer", "minimum": 1},
     "description": {"type": "string"},
-    "defaults": {"type": "object"},
-    "contexts": {"type": "object"},
+    "defaults": {"$ref": "#/$defs/limits"},
+    "contexts": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/limits"}
+    },
     "allowed_layer_types": {"type": "array", "items": {"type": "string"}},
-    "semantic_bounds": {"type": "object"},
+    "semantic_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "radius_tiles": {"$ref": "#/$defs/bound"},
+        "width_tiles": {"$ref": "#/$defs/bound"},
+        "length_tiles": {"$ref": "#/$defs/bound"},
+        "tell_ms": {"$ref": "#/$defs/bound"}
+      }
+    },
     "require_godot_smoke": {"type": "boolean"},
     "require_export_for_production": {"type": "boolean"},
     "require_engine_validation": {"type": "boolean"},
-    "runtime_gate": {"type": "string"},
+    "runtime_gate": {"type": "string", "enum": ["standalone", "host_project"]},
+    "required_export_mode": {"type": "string", "enum": ["standalone", "library"]},
+    "resource_root_template": {"type": "string"},
+    "shared_runtime_path": {"type": "string"},
     "preview_cameras": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "bound": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min": {"type": "number"},
+        "max": {"type": "number"}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "budget_profile": {"type": "string"},
+        "world_units_per_tile": {"type": "number"},
+        "max_particles": {"type": "integer"},
+        "max_lights": {"type": "integer"},
+        "max_draw_calls": {"type": "integer"},
+        "max_layers": {"type": "integer"},
+        "max_transparent_layers": {"type": "integer"},
+        "max_trail_segments": {"type": "integer"},
+        "max_beam_segments": {"type": "integer"},
+        "max_duration_sec": {"type": "number"},
+        "max_texture_dimension": {"type": "integer"},
+        "max_child_effect_depth": {"type": "integer"},
+        "allowed_layer_types": {"type": "array", "items": {"type": "string"}}
+      }
+    }
   }
 }

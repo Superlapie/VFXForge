@@ -11,17 +11,23 @@ vfxforge plan --request content/effects/my_effect.vfxrequest.json --policy enigm
 vfxforge forge --request content/effects/my_effect.vfxrequest.json --policy enigma --workspace build/service --json
 ~~~
 
-Use `vfxforge recipes list --json` and `vfxforge policies show enigma --json` to discover supported intent, gameplay semantics, and production gates. The service selects a recipe, compiles gameplay semantics (tile scale, tell timing, shape geometry), validates strictly, optionally autocorrects within policy bounds, renders a preview suite, exports when required, and promotes managed production output.
+Use `vfxforge capabilities --policy enigma --json` to discover supported recipes, required gameplay, and production gates. `vfxforge recipes show` and `vfxforge policies show` now return the same agent-facing fields. The service selects a recipe, compiles gameplay semantics (tile scale, tell timing, shape geometry), validates strictly, optionally autocorrects within policy bounds, renders a preview suite, exports when required, and promotes managed production output.
 
-**Do not** hand-author `.vfx.json` layer graphs for normal production requests. **Do not** return `production_ready` when required semantics were ignored or verification was skipped.
+`--policy enigma` automatically uses library export and host-project smoke. Do not pass `--export-mode standalone` unless you intend `needs_review`. **Do not** hand-author `.vfx.json` layer graphs for normal production requests. **Do not** return `production_ready` when required semantics were ignored or verification was skipped.
 
 Low-level document mutation (`set`, `add-layer`, `update-layer`, `add-event`) remains available for expert debugging, manual curation, and core development — not as the default agent workflow.
 
 ## Source of truth
 
-The canonical source is a *.vfx.json document. GUI state is not authoritative. Python model code normalizes/migrates documents, the CLI mutates them, and the Godot editor loads the same JSON through godot/model/vfx_document.gd.
+For managed semantic production:
 
-Never edit a .tscn, generated shader, export manifest, or exported effect.gd as the source of an effect. Regenerate those artifacts with vfxforge export.
+1. The `*.vfxrequest.json` request is the authoritative creative/gameplay intent.
+2. The compiled `*.vfx.json` document is the canonical VFX intermediate representation.
+3. Godot export (scenes, runtime, textures) is a derived backend artifact.
+
+GUI state is not authoritative. Python model code normalizes/migrates documents, the CLI mutates them, and the Godot editor loads the same JSON through godot/model/vfx_document.gd.
+
+Never edit a .tscn, generated shader, export manifest, or exported effect.gd as the source of an effect. Regenerate those artifacts with `vfxforge forge` or `vfxforge export`.
 
 The current schema is version 1. The root requires schema_version, stable id, name, positive duration, boolean loop, integer seed, and an ordered layers array. Layer IDs are stable and are the addressable namespace for AI edits:
 

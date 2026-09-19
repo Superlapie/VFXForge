@@ -53,9 +53,10 @@ Statuses: `ready`, `ready_corrected`, `needs_review`, `failed`
 ## CLI
 
 ```bash
-vfxforge forge --request examples/requests/fire_impact.vfxrequest.json --policy default --json
+vfxforge forge --request examples/requests/fire_impact.vfxrequest.json --policy enigma --json
+vfxforge capabilities --policy enigma --json
 vfxforge plan --request examples/requests/fire_impact.vfxrequest.json --policy default --json
-vfxforge recipes list --json
+vfxforge recipes show boss.line_sweep --json
 vfxforge policies show enigma --json
 vfxforge export effect.vfx.json --output build/out --mode library --resource-root res://generated/vfx/my_effect
 ```
@@ -64,7 +65,7 @@ vfxforge export effect.vfx.json --output build/out --mode library --resource-roo
 
 1. Pin VFX Forge in Enigma `toolchain.lock.json`
 2. Store semantic requests in `content/vfx/requests/*.vfxrequest.json`
-3. Wrapper script calls `vfxforge forge --policy enigma`
+3. Wrapper script calls `vfxforge forge --policy enigma` (library host-project gate is policy-default, not a required flag)
 4. Promoted bundles land in `client/generated/vfx/<effect_id>/`
 5. Shared runtime at `client/generated/vfx/_runtime/vfx_runtime.gd`
 6. `VfxCatalog` / `VfxSpawner` resolve effect IDs → `PackedScene`

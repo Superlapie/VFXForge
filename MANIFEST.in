@@ -4,3 +4,4 @@ recursive-include recipes *.json
 recursive-include policies *.json
 recursive-include schema *.json
 recursive-include godot/runtime *.gd
+recursive-include godot/host_smoke *

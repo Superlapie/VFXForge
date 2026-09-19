@@ -62,5 +62,8 @@
   "require_export_for_production": true,
   "require_engine_validation": true,
   "runtime_gate": "host_project",
+  "required_export_mode": "library",
+  "resource_root_template": "res://generated/vfx/{effect_id}",
+  "shared_runtime_path": "res://generated/vfx/_runtime/vfx_runtime.gd",
   "preview_cameras": ["mmo", "top"]
 }

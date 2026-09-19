@@ -10,28 +10,90 @@
     "recipe_version": {"type": "integer", "minimum": 1},
     "description": {"type": "string"},
     "display_name": {"type": "string"},
-    "matcher": {"type": "object"},
+    "matcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(intent|gameplay|context)\\.[A-Za-z0-9_]+$": {
+          "type": ["string", "number", "boolean", "array"]
+        }
+      }
+    },
     "priority": {"type": "integer"},
     "seed": {"type": "integer"},
     "required_gameplay": {"type": "array", "items": {"type": "string"}},
     "supported_gameplay": {"type": "array", "items": {"type": "string"}},
     "consumed_gameplay": {"type": "array", "items": {"type": "string"}},
-    "gameplay_scaling": {"type": "object"},
-    "timing": {"type": "object"},
+    "allow_extra_gameplay": {"type": "boolean"},
+    "gameplay_scaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "circle_size_layers": {"type": "array", "items": {"type": "string"}},
+        "rectangle_size_layers": {"type": "array", "items": {"type": "string"}},
+        "line_size_layers": {"type": "array", "items": {"type": "string"}},
+        "remove_layers_for_shape": {
+          "type": "object",
+          "additionalProperties": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "post_resolve_sec": {"type": "number"},
+        "resolve_event_id": {"type": "string"},
+        "resolve_layer_ids": {"type": "array", "items": {"type": "string"}},
+        "warning_layer_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
     "layer_roles": {
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["id"],
         "properties": {
           "id": {"type": "string"},
           "required": {"type": "boolean"},
-          "correction_priority": {"type": "integer"}
+          "correction_priority": {"type": "integer"},
+          "semantic_role": {
+            "type": "string",
+            "enum": [
+              "warning_geometry",
+              "warning_visual",
+              "warning_duration",
+              "resolve_event",
+              "resolve_visual",
+              "gameplay_footprint"
+            ]
+          }
         }
       }
     },
-    "bindings": {"type": "array"},
-    "intensity_scale": {"type": "object"},
+    "bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to"],
+        "properties": {
+          "from": {"type": "string"},
+          "to": {"type": "string"}
+        }
+      }
+    },
+    "intensity_scale": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subtle": {"type": "number"},
+        "standard": {"type": "number"},
+        "strong": {"type": "number"},
+        "boss": {"type": "number"}
+      }
+    },
     "document": {"type": "object"}
   }
 }

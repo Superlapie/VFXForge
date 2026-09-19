@@ -24,6 +24,11 @@ All commands accept --json anywhere in the argument list.
 | explain TOPIC | Describe commands, schema, layer type, or export. |
 | schema | Alias for explain schema. |
 | preset list / preset create NAME --output PATH | List or write authored starter effects. |
+| forge --request FILE --policy ID | Generate production VFX from a semantic request. Policy selects export mode and engine gate. |
+| plan --request FILE --policy ID | Resolve recipe and review reasons without promoting. |
+| recipes list / recipes show ID | List recipe IDs or show required/consumed gameplay. |
+| policies list / policies show ID | List policies or show production gates and ceilings. |
+| capabilities --policy ID | Agent discovery of recipes, required inputs, and production requirements. |
 
 ## Machine envelope
 
@@ -43,7 +48,8 @@ Exit codes:
 - 0: command completed successfully;
 - 1: validation failed;
 - 2: malformed arguments, missing files, or document read/migration failure;
-- 3: preview/export artifact failure.
+- 3: preview/export artifact failure;
+- 4: `forge` returned `needs_review` (not production-ready).
 
 ## Path examples
 

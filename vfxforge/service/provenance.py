@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..version import SCHEMA_VERSION, TOOL_VERSION
+from ..version import SCHEMA_VERSION, TOOL_VERSION, generator_identity
+from .gates import runtime_validation_for_mode
 from .policy import policy_ref
 from .promotion import _dependency_asset_hashes
 from .selector import recipe_ref
@@ -34,19 +35,45 @@ def build_provenance(
     shared_runtime_path: str | None = None,
     asset_root: str | Path | None = None,
     asset_catalog: dict[str, str] | None = None,
+    allow_replace: bool = False,
+    export_requested: bool = True,
+    consumption: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     policy_id = str(policy.get("policy_id", "default"))
+    identity = generator_identity()
+    reproduction = {
+        "tool_version": identity["tool_version"],
+        "tool_revision": identity["tool_revision"],
+        "compiler_contract_version": identity["compiler_contract_version"],
+        "runtime_sha256": identity["runtime_sha256"],
+        "policy": policy_id,
+        "export": bool(export_requested),
+        "export_mode": export_mode,
+        "resource_root": resource_root,
+        "shared_runtime": shared_runtime_path,
+        "asset_root": str(asset_root) if asset_root else None,
+        "allow_replace": allow_replace,
+        "request_file": "normalized_request.json",
+    }
     command_parts = [
         "vfxforge forge",
-        f"--request request.json --policy {policy_id}",
-        f"--workspace . --export-mode {export_mode}",
+        "--request normalized_request.json",
+        f"--policy {policy_id}",
+        "--workspace .",
+        f"--export-mode {export_mode}",
     ]
+    if not export_requested:
+        command_parts.append("--no-export")
     if resource_root:
         command_parts.append(f"--resource-root {resource_root}")
     if shared_runtime_path:
         command_parts.append(f"--shared-runtime {shared_runtime_path}")
+    if asset_root:
+        command_parts.append(f"--asset-root {asset_root}")
+    if allow_replace:
+        command_parts.append("--allow-replace")
     command_parts.append("--json")
-    reproduction = {"command": " ".join(command_parts)}
+    reproduction["command"] = " ".join(command_parts)
     recipe_meta = recipe_ref(recipe)
     policy_meta = policy_ref(policy_id)
     asset_hashes = _dependency_asset_hashes(recipe, asset_root=asset_root, catalog=asset_catalog)
@@ -56,6 +83,8 @@ def build_provenance(
         "recipe": recipe_meta.get("sha256"),
         "policy": policy_meta.get("sha256"),
         "assets": asset_hashes,
+        "tool_revision": identity["tool_revision"],
+        "runtime": identity["runtime_sha256"],
     }
     if export_result:
         manifest_path = Path(str(export_result.get("manifest", "")))
@@ -76,9 +105,12 @@ def build_provenance(
         "recipe": recipe_meta,
         "policy": policy_meta,
         "tool_version": TOOL_VERSION,
+        "tool_revision": identity["tool_revision"],
+        "compiler_contract_version": identity["compiler_contract_version"],
         "schema_version": SCHEMA_VERSION,
         "seed": seed,
         "corrections": corrections,
+        "consumption": consumption or {},
         "validation_summary": {
             "valid": validation.get("valid"),
             "error_count": len(validation.get("errors", [])),
@@ -87,7 +119,7 @@ def build_provenance(
         },
         "previews": previews,
         "export": export_result or {},
-        "runtime_validation": (export_result or {}).get("smoke_test") or (export_result or {}).get("host_smoke_test") or {},
+        "runtime_validation": runtime_validation_for_mode(export_mode, export_result),
         "asset_hashes": asset_hashes,
         "reproduction": reproduction,
         "hashes": hashes,

@@ -9,6 +9,8 @@
   },
   "priority": 100,
   "seed": 9182,
+  "supported_gameplay": [],
+  "consumed_gameplay": [],
   "document": {
     "schema_version": 1,
     "name": "Healing Aura",

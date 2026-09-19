@@ -16,20 +16,14 @@ The editor opens examples/arcane_impact.vfx.json by default. Use Open to load an
 
 ## First AI-authored effect
 
+Production agents use semantic forge, not manual layer graphs:
+
 ~~~
-mkdir -p work
-vfxforge create work/arcane_impact.vfx.json --name "Arcane Impact" --duration 1.5 --seed 18473
-vfxforge add-layer work/arcane_impact.vfx.json --type particle --id sparks
-vfxforge set work/arcane_impact.vfx.json \
-  layers.sparks.amount=64 \
-  layers.sparks.lifetime=0.75 \
-  layers.sparks.properties.emission_shape=sphere \
-  layers.sparks.properties.emission_radius=0.18 \
-  layers.sparks.curves.alpha='{"interpolation":"linear","points":[{"x":0,"y":0},{"x":0.1,"y":1},{"x":1,"y":0}]}'
-vfxforge validate work/arcane_impact.vfx.json --json
-vfxforge render-preview work/arcane_impact.vfx.json --time 0.7 --camera mmo --output work/arcane_impact.png
-vfxforge export work/arcane_impact.vfx.json --output work/ArcaneImpact
+vfxforge capabilities --policy default --json
+vfxforge forge --request examples/requests/fire_impact.vfxrequest.json --policy default --workspace work/service --no-export --json
 ~~~
+
+The expert/manual document path (`create`, `add-layer`, `set`) remains available for debugging and core development. It is not the default AI production workflow.
 
 ## Real 3D model workflow
 

@@ -21,7 +21,7 @@ if [[ -n "$GODOT_BIN" ]]; then
 fi
 
 echo "[1/11] Python model, CLI, renderer, and service tests"
-python3 -m unittest tests.test_model tests.test_cli tests.test_renderer_export tests.test_service tests.test_service_hardening tests.test_schema_contract tests.test_service_matrix -v
+python3 -m unittest tests.test_model tests.test_cli tests.test_renderer_export tests.test_service tests.test_service_hardening tests.test_schema_contract tests.test_service_matrix tests.test_service_trust -v
 
 echo "[2/11] User-facing CLI, Godot export, and GUI E2E"
 python3 -m unittest tests.test_user_e2e -v
@@ -117,9 +117,6 @@ for recipe_id, request, _recipe in iter_recipe_requests():
         policy_id='enigma',
         workspace=quality / effect_id,
         export=True,
-        export_mode='library',
-        resource_root=f'res://generated/vfx/{effect_id}',
-        shared_runtime_path='res://generated/vfx/_runtime/vfx_runtime.gd',
         allow_replace=True,
     )
     (quality / f'{effect_id}.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
@@ -133,13 +130,39 @@ PY
 
 echo "[10/11] Wheel install smoke"
 python3 -m pip wheel "$ROOT" -w "$QUALITY_DIR/wheel" --no-deps -q
-WHEEL_PATH="$(ls -1 "$QUALITY_DIR/wheel"/vfxforge-*.whl | head -n 1)"
-rm -rf "$QUALITY_DIR/wheel/site"
-python3 -m pip install "$WHEEL_PATH" --target "$QUALITY_DIR/wheel/site" -q
-PYTHONPATH="$QUALITY_DIR/wheel/site" python3 -m vfxforge.cli recipes list --json > "$QUALITY_DIR/wheel/recipes.json"
-PYTHONPATH="$QUALITY_DIR/wheel/site" python3 -m vfxforge.cli policies show enigma --json > "$QUALITY_DIR/wheel/policy.json"
-PYTHONPATH="$QUALITY_DIR/wheel/site" python3 -m vfxforge.cli plan --request examples/requests/fire_impact.vfxrequest.json --policy default --json > "$QUALITY_DIR/wheel/plan.json"
-PYTHONPATH="$QUALITY_DIR/wheel/site" python3 -m vfxforge.cli forge --request examples/requests/fire_impact.vfxrequest.json --policy default --workspace "$QUALITY_DIR/wheel/service" --no-export --json > "$QUALITY_DIR/wheel/forge.json"
+WHEEL_PATH=""
+for candidate in "$QUALITY_DIR/wheel"/vfxforge-*.whl; do
+  WHEEL_PATH="$candidate"
+done
+test -n "$WHEEL_PATH"
+rm -rf "$QUALITY_DIR/wheel/venv" "$QUALITY_DIR/wheel/site" "$QUALITY_DIR/wheel/service" "$QUALITY_DIR/wheel/enigma" "$QUALITY_DIR/wheel/run"
+python3 -m venv "$QUALITY_DIR/wheel/venv"
+WPYTHON="$QUALITY_DIR/wheel/venv/bin/python"
+env -u PYTHONPATH "$WPYTHON" -m pip install -q "$WHEEL_PATH"
+test -x "$QUALITY_DIR/wheel/venv/bin/vfxforge"
+mkdir -p "$QUALITY_DIR/wheel/run"
+run_wheel() {
+  ( unset PYTHONPATH; cd "$QUALITY_DIR/wheel/run" && "$WPYTHON" -m vfxforge.cli "$@" )
+}
+run_wheel recipes list --json > "$QUALITY_DIR/wheel/recipes.json"
+run_wheel policies show enigma --json > "$QUALITY_DIR/wheel/policy.json"
+run_wheel capabilities --policy enigma --json > "$QUALITY_DIR/wheel/capabilities.json"
+run_wheel plan --request "$ROOT/examples/requests/fire_impact.vfxrequest.json" --policy default --json > "$QUALITY_DIR/wheel/plan.json"
+run_wheel forge --request "$ROOT/examples/requests/fire_impact.vfxrequest.json" --policy default --workspace "$QUALITY_DIR/wheel/service" --no-export --json > "$QUALITY_DIR/wheel/forge.json"
+run_wheel forge --request "$ROOT/examples/requests/fire_impact.vfxrequest.json" --policy enigma --workspace "$QUALITY_DIR/wheel/enigma" --allow-replace --json > "$QUALITY_DIR/wheel/enigma_forge.json" || true
+python3 - <<'PY'
+import json
+from pathlib import Path
+payload = json.loads(Path('build/quality/wheel/enigma_forge.json').read_text(encoding='utf-8'))
+result = payload.get('data', payload)
+assert result.get('production_ready') is True, result
+host = result.get('export_validation', {}).get('host_smoke_test', {})
+assert host.get('status') == 'passed', host
+default_payload = json.loads(Path('build/quality/wheel/forge.json').read_text(encoding='utf-8'))
+default_result = default_payload.get('data', default_payload)
+assert default_result.get('production_ready') is True, default_result
+print('installed-wheel enigma library forge OK')
+PY
 
 echo "[11/11] Artifact checks"
 test -s "$QUALITY_DIR/validate.json"
@@ -147,7 +170,9 @@ test -s "$QUALITY_DIR/render.json"
 test -s "$QUALITY_DIR/export.json"
 test -f "$QUALITY_DIR/exports/portal/meshes/forge_totem.obj"
 test -s "$QUALITY_DIR/wheel/recipes.json"
+test -s "$QUALITY_DIR/wheel/capabilities.json"
 test -s "$QUALITY_DIR/wheel/forge.json"
+test -s "$QUALITY_DIR/wheel/enigma_forge.json"
 python3 - "$QUALITY_DIR/exports/portal/export_manifest.json" <<'PY'
 import json
 import sys

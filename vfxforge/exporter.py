@@ -8,13 +8,14 @@ import os
 import shutil
 import subprocess
 import tempfile
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from .errors import ExportError
 from .model import read_document
-from .resources import godot_runtime_dir
+from .resources import godot_runtime_dir, host_smoke_dir
 from .service.paths import validate_resource_path
 from .validation import validate_document
 from .version import GODOT_TARGET, TOOL_VERSION
@@ -83,17 +84,28 @@ def _effect_refs(document: dict[str, Any]) -> set[str]:
 
 
 def _resolve_effect_source(reference: str, base_dir: Path) -> Path | None:
-    candidate = (base_dir / reference.removeprefix("res://")).resolve()
+    base = base_dir.resolve()
+    raw = base / reference.removeprefix("res://")
+    try:
+        candidate = raw.resolve()
+        candidate.relative_to(base)
+    except ValueError as exc:
+        raise ExportError(f"Child effect dependency escapes the project: {reference}", "EFFECT_OUTSIDE_PROJECT", reference) from exc
     if candidate.exists() and candidate.is_file():
         return candidate
     if candidate.suffix == "":
-        candidate = candidate.with_suffix(".vfx.json")
-    if candidate.exists() and candidate.is_file():
-        return candidate
-    for path in sorted(base_dir.rglob("*.vfx.json")):
+        with_suffix = candidate.with_suffix(".vfx.json")
+        if with_suffix.exists() and with_suffix.is_file():
+            return with_suffix
+    for path in sorted(base.rglob("*.vfx.json")):
         try:
-            if read_document(path).get("id") == reference:
-                return path.resolve()
+            resolved = path.resolve()
+            resolved.relative_to(base)
+        except ValueError:
+            continue
+        try:
+            if read_document(resolved).get("id") == reference:
+                return resolved
         except Exception:
             continue
     return None
@@ -315,8 +327,8 @@ def _run_host_library_smoke(output: Path, resource_root: str, shared_runtime_pat
     command = _godot_command()
     if command is None:
         return {"status": "skipped", "reason": "Godot 4.x was not found on PATH for host library smoke."}
-    fixture_root = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "host_library"
-    if not fixture_root.exists():
+    fixture_root = host_smoke_dir()
+    if fixture_root is None or not fixture_root.exists():
         return {"status": "skipped", "reason": "Host library fixture project is missing."}
     validate_resource_path(resource_root, "resource_root")
     if shared_runtime_path:
@@ -389,6 +401,26 @@ def _run_host_library_smoke(output: Path, resource_root: str, shared_runtime_pat
         return {"status": "passed", "godot": command, "resource_root": resource_root, "checkpoints": smoke_config["checkpoints"]}
 
 
+def _replace_directory(staging: Path, destination: Path) -> None:
+    backup = destination.with_name(destination.name + ".export-bak")
+    if backup.exists():
+        shutil.rmtree(backup)
+    had_destination = destination.exists()
+    if had_destination:
+        destination.rename(backup)
+    try:
+        staging.rename(destination)
+    except OSError:
+        try:
+            shutil.move(str(staging), str(destination))
+        except Exception:
+            if had_destination and backup.exists() and not destination.exists():
+                backup.rename(destination)
+            raise
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+
+
 def export_document(
     document: dict[str, Any],
     source_path: str | Path,
@@ -420,7 +452,11 @@ def export_document(
             "EXPORT_VALIDATION_FAILED",
             str(source),
         )
-    destination = Path(output).resolve()
+    final_destination = Path(output).resolve()
+    staging = final_destination.parent / f".{final_destination.name}.export-staging-{uuid.uuid4().hex[:8]}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    destination = staging
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "materials").mkdir(exist_ok=True)
     (destination / "shaders").mkdir(exist_ok=True)
@@ -599,6 +635,8 @@ void fragment() {
         "host_smoke_test": host_smoke,
     }
     (destination / "export_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    _replace_directory(staging, final_destination)
+    destination = final_destination
     return {
         "output": str(destination),
         "entry_scene": str(destination / "effect.tscn"),

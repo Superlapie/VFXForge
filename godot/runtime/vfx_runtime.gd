@@ -4,6 +4,7 @@ extends Node3D
 signal playback_changed(is_playing: bool)
 signal time_changed(time: float, duration: float)
 signal runtime_warning(message: String)
+signal event_triggered(event_id: String, time: float)
 
 var document: Dictionary = {}
 var elapsed: float = 0.0
@@ -17,6 +18,7 @@ var generated_nodes: Array[Node] = []
 var beam_nodes: Array[MeshInstance3D] = []
 var editor_solo_layer_id: String = ""
 var editor_selected_layer_id: String = ""
+var _fired_events: Dictionary = {}
 
 
 func set_document(value: Dictionary, asset_base: String = "") -> void:
@@ -83,6 +85,7 @@ func restart() -> void:
 
 func seek(time: float) -> void:
     elapsed = clamp(time, 0.0, _duration())
+    _fired_events.clear()
     _update_runtime(elapsed)
     time_changed.emit(elapsed, _duration())
 
@@ -129,7 +132,41 @@ func _process(delta: float) -> void:
 
 func _duration() -> float:
     var value: Variant = document.get("duration", 1.0)
-    return max(0.001, float(value) if value is float or value is int else 1.0)
+    return maxf(0.001, float(value) if value is float or value is int else 1.0)
+
+
+func _emit_timeline_events(time: float) -> void:
+    var timeline: Variant = document.get("timeline", {})
+    if not timeline is Dictionary:
+        return
+    var events: Variant = timeline.get("events", [])
+    if not events is Array:
+        return
+    for event_variant in events:
+        if not event_variant is Dictionary:
+            continue
+        var event: Dictionary = event_variant
+        var event_id := str(event.get("event_id", event.get("id", "")))
+        if event_id.is_empty() or _fired_events.get(event_id, false):
+            continue
+        if time + 0.0001 >= float(event.get("time", 0.0)):
+            _fired_events[event_id] = true
+            event_triggered.emit(event_id, time)
+    for node in generated_nodes:
+        if not is_instance_valid(node):
+            continue
+        var layer_variant: Variant = node.get_meta("vfx_layer", {})
+        if not layer_variant is Dictionary:
+            continue
+        var layer: Dictionary = layer_variant
+        if str(layer.get("type", "")) != "event_marker":
+            continue
+        var marker_id := str(_properties(layer).get("event_id", layer.get("id", "")))
+        if marker_id.is_empty() or _fired_events.get(marker_id, false):
+            continue
+        if time + 0.0001 >= float(layer.get("start", 0.0)):
+            _fired_events[marker_id] = true
+            event_triggered.emit(marker_id, time)
 
 
 func _create_layer(layer: Dictionary) -> Node:
@@ -295,6 +332,9 @@ func _create_trail(layer: Dictionary) -> Node:
     trail.name = str(layer.get("id", "trail"))
     var properties := _properties(layer)
     trail.configure(float(properties.get("width", 0.18)), float(properties.get("lifetime", 0.35)), _color(properties.get("color", "#9C8CFFFF")))
+    var target_ref := str(properties.get("target", ""))
+    trail.set("tracking_path", target_ref)
+    trail.set("preview_motion", target_ref.is_empty())
     return trail
 
 
@@ -384,6 +424,7 @@ func _create_marker(layer: Dictionary) -> Node3D:
 
 func _update_runtime(time: float) -> void:
     var duration := _duration()
+    _emit_timeline_events(time)
     for node in generated_nodes:
         if not is_instance_valid(node):
             continue

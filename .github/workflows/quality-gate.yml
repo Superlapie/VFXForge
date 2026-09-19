@@ -1,0 +1,78 @@
+name: Quality gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python-contract:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e .
+      - name: Unit, service, schema, and matrix tests
+        run: python -m unittest discover -s tests -v
+
+  godot-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python package
+        run: python -m pip install -e .
+      - name: Install Godot 4.7.2
+        run: |
+          mkdir -p .tools/godot
+          curl -L -o /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          python -m zipfile -e /tmp/godot.zip .tools/godot
+          chmod +x .tools/godot/Godot_v4.7.2-stable_linux.x86_64
+          echo "VFXFORGE_GODOT=$PWD/.tools/godot/Godot_v4.7.2-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Quality gate
+        run: ./scripts/quality-gate
+
+  distribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        run: python -m pip install build && python -m build --wheel
+      - name: Install Godot 4.7.2
+        run: |
+          mkdir -p .tools/godot
+          curl -L -o /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          python -m zipfile -e /tmp/godot.zip .tools/godot
+          chmod +x .tools/godot/Godot_v4.7.2-stable_linux.x86_64
+          echo "VFXFORGE_GODOT=$PWD/.tools/godot/Godot_v4.7.2-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Install wheel in clean env
+        run: |
+          python -m venv /tmp/vfxforge-wheel
+          /tmp/vfxforge-wheel/bin/python -m pip install dist/vfxforge-*.whl
+          mkdir -p /tmp/vfxforge-run
+          REQUEST="$PWD/examples/requests/fire_impact.vfxrequest.json"
+          cd /tmp/vfxforge-run
+          /tmp/vfxforge-wheel/bin/python -m vfxforge.cli capabilities --policy enigma --json
+          /tmp/vfxforge-wheel/bin/python -m vfxforge.cli forge --request "$REQUEST" --policy default --workspace /tmp/vfxforge-service --no-export --json
+          /tmp/vfxforge-wheel/bin/python -m vfxforge.cli forge --request "$REQUEST" --policy enigma --workspace /tmp/vfxforge-enigma --allow-replace --json > /tmp/vfxforge-enigma-forge.json || true
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("/tmp/vfxforge-enigma-forge.json").read_text(encoding="utf-8"))
+          result = payload.get("data", payload)
+          assert result.get("production_ready") is True, result
+          host = result.get("export_validation", {}).get("host_smoke_test", {})
+          assert host.get("status") == "passed", host
+          print("installed-wheel enigma library forge OK")
+          PY

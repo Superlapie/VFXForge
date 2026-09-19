@@ -269,22 +269,40 @@ def _effect_reference(layer: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _contained_resolved(project_dir: Path, candidate: Path) -> Path | None:
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(project_dir.resolve())
+    except ValueError:
+        return None
+    return resolved
+
+
+def _reference_escapes_project(reference: str, project_dir: Path) -> bool:
+    raw = project_dir / reference.removeprefix("res://")
+    return _contained_resolved(project_dir, raw) is None
+
+
 def _resolve_effect(reference: str, project_dir: Path) -> Path | None:
-    candidate = (project_dir / reference).resolve()
-    if candidate.exists() and candidate.is_file():
+    project = project_dir.resolve()
+    candidate = _contained_resolved(project, project / reference.removeprefix("res://"))
+    if candidate is not None and candidate.exists() and candidate.is_file():
         return candidate
-    if candidate.suffix == "":
-        candidate = candidate.with_suffix(".vfx.json")
-    if candidate.exists() and candidate.is_file():
-        return candidate
-    by_id = sorted(project_dir.rglob("*.vfx.json"))
-    for path in by_id:
+    if candidate is not None and candidate.suffix == "":
+        with_suffix = candidate.with_suffix(".vfx.json")
+        contained = _contained_resolved(project, with_suffix)
+        if contained is not None and contained.exists() and contained.is_file():
+            return contained
+    for path in sorted(project.rglob("*.vfx.json")):
+        contained = _contained_resolved(project, path)
+        if contained is None:
+            continue
         try:
-            document = read_document(path)
+            document = read_document(contained)
         except Exception:
             continue
         if document.get("id") == reference:
-            return path
+            return contained
     return None
 
 
@@ -292,7 +310,8 @@ def detect_dependency_cycles(document: dict[str, Any], project_dir: Path | None)
     if project_dir is None:
         return []
     root_id = str(document.get("id", "<missing>"))
-    seen: set[Path] = set()
+    gray: set[str] = {root_id}
+    black: set[str] = set()
     stack: list[str] = [root_id]
     cycles: list[dict[str, Any]] = []
 
@@ -307,14 +326,12 @@ def detect_dependency_cycles(document: dict[str, Any], project_dir: Path | None)
             child_path = _resolve_effect(reference, current_dir)
             if child_path is None:
                 continue
-            if child_path in seen:
-                continue
             try:
                 child = read_document(child_path)
             except Exception:
                 continue
             child_id = str(child.get("id", reference))
-            if child_id in stack:
+            if child_id in gray:
                 cycles.append(
                     issue(
                         "error",
@@ -326,10 +343,14 @@ def detect_dependency_cycles(document: dict[str, Any], project_dir: Path | None)
                     )
                 )
                 continue
-            seen.add(child_path)
+            if child_id in black:
+                continue
+            gray.add(child_id)
             stack.append(child_id)
             visit(child, child_path)
             stack.pop()
+            gray.remove(child_id)
+            black.add(child_id)
 
     visit(document, None)
     return cycles
@@ -603,7 +624,11 @@ def validate_document(
         if not isinstance(layer, dict):
             continue
         reference = _effect_reference(layer)
-        if reference and project is not None and _resolve_effect(reference, project) is None:
+        if not reference or project is None:
+            continue
+        if _reference_escapes_project(reference, project):
+            errors.append(issue("error", "CHILD_EFFECT_OUTSIDE_PROJECT", f"layers[{index}].properties.effect_id", f"Child effect reference escapes the project: {reference}", "Use a project-relative path or a stable effect ID.", reference))
+        elif _resolve_effect(reference, project) is None:
             errors.append(issue("error", "MISSING_CHILD_EFFECT", f"layers[{index}].properties.effect_id", f"Child effect does not exist: {reference}", "Create the referenced .vfx.json or correct the stable ID.", reference))
     errors.extend(detect_dependency_cycles(root, project))
 

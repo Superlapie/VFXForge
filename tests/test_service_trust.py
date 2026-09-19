@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""Trust-boundary regressions for autonomous production use."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import threading
+import unittest
+from copy import deepcopy
+from pathlib import Path
+from unittest.mock import patch
+
+from vfxforge import resources
+from vfxforge.errors import RecipeBindingError
+from vfxforge.exporter import export_document
+from vfxforge.model import write_document
+from vfxforge.schema import default_document, make_layer
+from vfxforge.schema_validate import SchemaValidationError, validate_instance
+from vfxforge.service.capabilities import capabilities
+from vfxforge.service.compiler import compile_recipe, compile_recipe_with_ledger
+from vfxforge.service.pipeline import forge
+from vfxforge.service.policy import load_policy
+from vfxforge.service.promotion import acquire_promotion_lock, generation_digest, release_promotion_lock
+from vfxforge.service.request import normalize_request
+from vfxforge.service.result import ForgeStatus
+from vfxforge.service.selector import list_recipes, load_recipe, select_recipe
+from vfxforge.service.semantic import validate_recipe_semantics
+from vfxforge.validation import validate_document
+from vfxforge.version import COMPILER_CONTRACT_VERSION
+
+from tests.test_cli import run_cli
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REQUESTS = ROOT / "examples" / "requests"
+
+
+def _read_request(name: str) -> dict:
+    return json.loads((REQUESTS / name).read_text(encoding="utf-8"))
+
+
+class EnigmaPolicyGateTests(unittest.TestCase):
+    def test_enigma_default_invocation_uses_library_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            captured = {}
+
+            def fake_export(document, source, output, **kwargs):
+                captured.update(kwargs)
+                dest = Path(output)
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "effect.tscn").write_text("[gd_scene]\n", encoding="utf-8")
+                manifest = dest / "export_manifest.json"
+                manifest.write_text("{}\n", encoding="utf-8")
+                return {
+                    "output": str(dest),
+                    "manifest": str(manifest),
+                    "smoke_test": {"status": "not_requested"},
+                    "host_smoke_test": {"status": "passed", "checkpoints": [0.0]},
+                    "validation": {"valid": True, "errors": [], "warnings": []},
+                }
+
+            with patch("vfxforge.service.pipeline.export_document", side_effect=fake_export):
+                result = forge(_read_request("fire_impact.vfxrequest.json"), policy_id="enigma", workspace=tmp, export=True)
+            self.assertEqual(captured.get("mode"), "library")
+            self.assertTrue(str(captured.get("resource_root", "")).startswith("res://generated/vfx/"))
+            self.assertIn(result["status"], {ForgeStatus.READY.value, ForgeStatus.READY_CORRECTED.value})
+
+    def test_enigma_explicit_standalone_is_not_production_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = forge(
+                _read_request("fire_impact.vfxrequest.json"),
+                policy_id="enigma",
+                workspace=tmp,
+                export=True,
+                export_mode="standalone",
+            )
+            self.assertEqual(result["status"], ForgeStatus.NEEDS_REVIEW.value)
+            self.assertFalse(result["production_ready"])
+            self.assertTrue(any(item["code"] == "POLICY_EXPORT_MODE_MISMATCH" for item in result["review_reasons"]))
+
+
+class GameplayRejectionMatrixTests(unittest.TestCase):
+    def test_every_recipe_rejects_undeclared_gameplay(self) -> None:
+        policy = load_policy("default")
+        for recipe_id in list_recipes():
+            recipe = load_recipe(recipe_id)
+            request = {
+                "request_version": 1,
+                "effect_id": "probe_effect",
+                "intent": {"kind": "impact", "element": "fire", "purpose": "damage", "intensity": "standard"},
+                "gameplay": {"source_height": 3.0},
+                "context": {"target": "standalone", "usage": "normal_combat"},
+            }
+            request["intent"]["kind"] = {
+                "aura.healing": "aura",
+                "beam.lightning": "beam",
+                "boss.eruption_2x2": "boss_ability",
+                "boss.line_sweep": "boss_ability",
+                "cloud.poison": "cloud",
+                "impact.dust": "impact",
+                "impact.fire": "impact",
+                "impact.neutral": "impact",
+                "lightning.strike": "lightning_strike",
+                "portal.standard": "portal",
+                "telegraph.circle": "ground_telegraph",
+                "telegraph.line": "ground_telegraph",
+                "telegraph.rectangle": "ground_telegraph",
+                "trail.projectile": "projectile_trail",
+                "trail.weapon": "weapon_trail",
+            }[recipe_id]
+            if recipe_id == "aura.healing":
+                request["intent"]["purpose"] = "healing"
+                request["intent"]["element"] = "holy"
+            if recipe_id == "impact.dust":
+                request["intent"]["element"] = "earth"
+            if recipe_id in {"telegraph.circle", "telegraph.line", "telegraph.rectangle", "boss.line_sweep", "boss.eruption_2x2"}:
+                request["intent"]["purpose"] = "danger_warning"
+            normalized = normalize_request(request)
+            review = validate_recipe_semantics(normalized, recipe, policy)
+            self.assertTrue(
+                any(item["code"] == "UNSUPPORTED_SEMANTIC_PARAMETER" for item in review),
+                msg=f"{recipe_id} accepted undeclared gameplay.source_height: {review}",
+            )
+
+
+class SemanticConsumptionTests(unittest.TestCase):
+    def test_broken_binding_target_cannot_be_ready(self) -> None:
+        request = normalize_request(_read_request("trail_weapon.vfxrequest.json"))
+        recipe = load_recipe("trail.weapon")
+        broken = deepcopy(recipe)
+        broken["bindings"][0]["to"] = "layers.blade_tral.properties.target"
+        with self.assertRaises(RecipeBindingError) as context:
+            compile_recipe(request, broken, load_policy("enigma"))
+        self.assertEqual(context.exception.code, "RECIPE_BINDING_TARGET_MISSING")
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("vfxforge.service.pipeline.select_recipe", return_value=(broken, [broken], [])):
+                result = forge(_read_request("trail_weapon.vfxrequest.json"), policy_id="default", workspace=tmp, export=False)
+            self.assertFalse(result["production_ready"])
+            self.assertEqual(result["status"], ForgeStatus.FAILED.value)
+            self.assertTrue(any(item["code"] == "RECIPE_BINDING_TARGET_MISSING" for item in result["errors"]))
+
+    def test_weapon_trail_consumes_attachment(self) -> None:
+        request = normalize_request(_read_request("trail_weapon.vfxrequest.json"))
+        recipe = load_recipe("trail.weapon")
+        document, ledger = compile_recipe_with_ledger(request, recipe, load_policy("enigma"))
+        self.assertTrue(ledger["gameplay.attachment"]["verified"])
+        trail = next(layer for layer in document["layers"] if layer["id"] == "blade_trail")
+        self.assertEqual(trail["properties"]["target"], "weapon")
+
+
+class LibraryCliFailureTests(unittest.TestCase):
+    def test_library_export_cli_fails_when_host_smoke_fails(self) -> None:
+        payload = {
+            "output": "/tmp/export",
+            "manifest": "/tmp/export/export_manifest.json",
+            "validation": {"valid": True, "warnings": [], "errors": []},
+            "smoke_test": {"status": "not_requested"},
+            "host_smoke_test": {"status": "failed", "stderr": "boom"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "effect.vfx.json"
+            run_cli("create", str(path))
+            with patch("vfxforge.cli.export_file", return_value=payload):
+                code, result = run_cli("export", str(path), "--output", str(Path(tmp) / "out"), "--mode", "library")
+            self.assertNotEqual(code, 0)
+            self.assertFalse(result["success"])
+            self.assertEqual(result["errors"][0]["code"], "HOST_LIBRARY_SMOKE_FAILED")
+
+
+class ExportIdempotencyTests(unittest.TestCase):
+    def test_repeat_export_does_not_keep_stale_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = default_document("export_one", "One", 1.0)
+            first_path = root / "one.vfx.json"
+            write_document(first_path, first)
+            output = root / "out"
+            export_document(first, first_path, output, run_smoke_test=False)
+            stale = output / "textures" / "stale.png"
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_bytes(b"stale")
+            (output / "project.godot").write_text("stale-project\n", encoding="utf-8")
+            second = default_document("export_one", "Two", 1.0)
+            export_document(second, first_path, output, run_smoke_test=False, mode="library", resource_root="res://generated/vfx/export_one")
+            self.assertFalse(stale.exists())
+            self.assertFalse((output / "project.godot").exists())
+            self.assertTrue((output / "effect.tscn").exists())
+
+
+class ChildEffectSafetyTests(unittest.TestCase):
+    def test_nested_dependency_cycle_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            documents = {
+                "root_effect": "b_effect",
+                "b_effect": "c_effect",
+                "c_effect": "b_effect",
+            }
+            for effect_id, child_id in documents.items():
+                document = default_document(effect_id, effect_id, 1.0)
+                document["layers"].append(make_layer("child_effect", f"to_{child_id}"))
+                document["layers"][0]["properties"]["effect_id"] = child_id
+                write_document(root / f"{effect_id}.vfx.json", document)
+            validation = validate_document(json.loads((root / "root_effect.vfx.json").read_text(encoding="utf-8")), root)
+            self.assertFalse(validation["valid"])
+            self.assertIn("CHILD_EFFECT_CYCLE", {item["code"] for item in validation["errors"]})
+
+    def test_child_path_traversal_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = Path(tmp) / ".." / f"outside-{Path(tmp).name}.vfx.json"
+            write_document(outside, default_document("outside_effect", "Outside", 1.0))
+            document = default_document("inside_effect", "Inside", 1.0)
+            document["layers"].append(make_layer("child_effect", "escaped"))
+            document["layers"][0]["properties"]["effect_id"] = "../outside.vfx.json"
+            validation = validate_document(document, root)
+            self.assertFalse(validation["valid"])
+            self.assertIn("CHILD_EFFECT_OUTSIDE_PROJECT", {item["code"] for item in validation["errors"]})
+            if outside.exists():
+                outside.unlink()
+
+
+class PromotionLockTests(unittest.TestCase):
+    def test_stale_promotion_lock_is_recovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "effect.promotion.lock"
+            lock_path.write_text(json.dumps({"job_id": "dead", "pid": 99999999, "time": 0}) + "\n", encoding="utf-8")
+            recovered = acquire_promotion_lock(lock_path, "fresh", timeout_sec=1.0)
+            self.assertEqual(recovered, lock_path)
+            release_promotion_lock(recovered)
+
+    def test_incomplete_lock_is_not_stolen_while_fresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "effect.promotion.lock"
+            lock_path.write_bytes(b"")
+            outcome: list[str] = []
+
+            def waiter() -> None:
+                try:
+                    acquire_promotion_lock(lock_path, "waiter", timeout_sec=0.4)
+                    outcome.append("acquired")
+                except TimeoutError:
+                    outcome.append("timeout")
+
+            thread = threading.Thread(target=waiter)
+            thread.start()
+            thread.join()
+            self.assertEqual(outcome, ["timeout"])
+            self.assertTrue(lock_path.exists())
+
+
+class GeneratorIdentityTests(unittest.TestCase):
+    def test_runtime_or_revision_change_alters_generation_digest(self) -> None:
+        request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
+        recipe = load_recipe("impact.fire")
+        policy = load_policy("default")
+        digest_a = generation_digest(request, recipe, policy, tool_revision="aaa", runtime_sha256={"vfx_runtime.gd": "1"})
+        digest_b = generation_digest(request, recipe, policy, tool_revision="bbb", runtime_sha256={"vfx_runtime.gd": "1"})
+        digest_c = generation_digest(request, recipe, policy, tool_revision="aaa", runtime_sha256={"vfx_runtime.gd": "2"})
+        self.assertNotEqual(digest_a, digest_b)
+        self.assertNotEqual(digest_a, digest_c)
+        self.assertEqual(COMPILER_CONTRACT_VERSION, 2)
+
+
+class CapabilitiesDiscoveryTests(unittest.TestCase):
+    def test_agent_can_discover_enigma_requirements_from_json(self) -> None:
+        payload = capabilities("enigma")
+        self.assertEqual(payload["policy"]["required_export_mode"], "library")
+        self.assertEqual(payload["policy"]["runtime_gate"], "host_project")
+        self.assertTrue(payload["policy"]["require_export_for_production"])
+        boss = next(item for item in payload["recipes"] if item["id"] == "boss.line_sweep")
+        self.assertIn("gameplay.tell_ms", boss["required"])
+        self.assertTrue(boss["unsupported_parameters_are_errors"])
+        code, result = run_cli("capabilities", "--policy", "enigma")
+        self.assertEqual(code, 0)
+        self.assertEqual(result["data"]["policy"]["required_export_mode"], "library")
+
+
+class ManagedMutationTests(unittest.TestCase):
+    def test_create_force_and_add_texture_refuse_managed_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = forge(_read_request("fire_impact.vfxrequest.json"), policy_id="default", workspace=tmp, export=False)
+            production = Path(result["artifacts"]["production"])
+            documents = list(production.glob("*.vfx.json"))
+            self.assertTrue(documents)
+            target = documents[0]
+            code, created = run_cli("create", str(target), "--force")
+            self.assertNotEqual(code, 0)
+            self.assertEqual(created["errors"][0]["code"], "MANAGED_DOCUMENT")
+            source = Path(tmp) / "probe.png"
+            source.write_bytes(b"\x89PNG\r\n")
+            before = list((target.parent / "assets" / "textures").glob("*")) if (target.parent / "assets" / "textures").exists() else []
+            code, added = run_cli("add-texture", str(target), "--source", str(source))
+            self.assertNotEqual(code, 0)
+            self.assertEqual(added["errors"][0]["code"], "MANAGED_DOCUMENT")
+            after = list((target.parent / "assets" / "textures").glob("*")) if (target.parent / "assets" / "textures").exists() else []
+            self.assertEqual(before, after)
+
+
+class PackagedResourceTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        resources.install_root.cache_clear()
+
+    def test_target_layout_resolves_host_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp)
+            share = site / "share" / "vfxforge"
+            (share / "recipes").mkdir(parents=True)
+            (share / "policies").mkdir()
+            host = share / "godot" / "host_smoke"
+            host.mkdir(parents=True)
+            (host / "host_smoke.gd").write_text("extends Node\n", encoding="utf-8")
+            (host / "project.godot").write_text("[application]\n", encoding="utf-8")
+            fake_pkg = site / "vfxforge"
+            fake_pkg.mkdir()
+            resources.install_root.cache_clear()
+            with patch.object(resources, "PKG_ROOT", fake_pkg):
+                self.assertEqual(resources.install_root(), share)
+                self.assertEqual(resources.host_smoke_dir(), host)
+
+
+class SchemaTypoTests(unittest.TestCase):
+    def test_policy_and_recipe_typos_fail_schema(self) -> None:
+        from vfxforge.schema_validate import SchemaValidationError, validate_instance
+
+        policy = load_policy("enigma")
+        policy["defaults"]["max_particels"] = 4000
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(policy, "vfx.policy.schema.json")
+        recipe = load_recipe("boss.line_sweep")
+        recipe["priorityy"] = 1
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(recipe, "vfx.recipe.schema.json")
+
+
+if __name__ == "__main__":
+    unittest.main()

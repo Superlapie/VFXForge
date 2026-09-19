@@ -8,6 +8,8 @@
   },
   "priority": 100,
   "seed": 60012,
+  "supported_gameplay": [],
+  "consumed_gameplay": [],
   "document": {
     "schema_version": 1,
     "name": "Portal",

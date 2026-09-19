@@ -17,7 +17,7 @@ from vfxforge.model import set_path, write_document
 from vfxforge.presets import make_preset
 from vfxforge.schema import LAYER_DEFAULTS, default_document
 from vfxforge.service.autocorrect import autocorrect_document
-from vfxforge.service.compiler import compile_recipe
+from vfxforge.service.compiler import compile_recipe, compile_recipe_with_ledger
 from vfxforge.service.pipeline import forge, plan, validate_compiled_effect
 from vfxforge.service.policy import load_policy
 from vfxforge.service.promotion import generation_digest, promote_candidate, request_hash
@@ -205,18 +205,18 @@ class PolicyAssetLimitTests(unittest.TestCase):
             self.assertFalse(validation["valid"])
             self.assertTrue(any(item["code"] == "TEXTURE_DIMENSION_EXCEEDED" for item in validation["errors"]))
 
-            original = compile_recipe
+            original = compile_recipe_with_ledger
 
             def inject(*args, **kwargs):
-                document = original(*args, **kwargs)
+                document, ledger = original(*args, **kwargs)
                 for layer in document["layers"]:
                     if layer.get("id") == "scorch":
                         layer["properties"]["texture"] = "huge.png"
                         break
                 document.setdefault("dependencies", {})["textures"] = ["huge.png"]
-                return document
+                return document, ledger
 
-            with patch("vfxforge.service.pipeline.compile_recipe", side_effect=inject):
+            with patch("vfxforge.service.pipeline.compile_recipe_with_ledger", side_effect=inject):
                 result = forge(request, policy_id="enigma", workspace=asset_root / "ws", export=True, asset_root=asset_root)
             self.assertFalse(result["production_ready"])
             self.assertTrue(any(item["code"] == "TEXTURE_DIMENSION_EXCEEDED" for item in result.get("errors", [])))

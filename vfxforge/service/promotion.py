@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..version import SCHEMA_VERSION, TOOL_VERSION
+from ..version import SCHEMA_VERSION, TOOL_VERSION, generator_identity
 from .assets import hash_assets
 from .paths import assert_safe_id
 
@@ -18,6 +18,7 @@ from .paths import assert_safe_id
 MANAGED_MARKER = ".vfxforge-managed"
 LOCK_NAME = ".promotion.lock"
 FORGE_MANIFEST = "forge_manifest.json"
+STALE_LOCK_SEC = 120.0
 
 
 def request_hash(normalized_request: dict[str, Any]) -> str:
@@ -46,8 +47,18 @@ def generation_digest(
     schema_version: int = SCHEMA_VERSION,
     asset_root: str | Path | None = None,
     asset_catalog: dict[str, str] | None = None,
+    tool_revision: str | None = None,
+    compiler_contract_version: int | None = None,
+    runtime_sha256: dict[str, str] | None = None,
 ) -> str:
     asset_hashes = _dependency_asset_hashes(recipe, asset_root=asset_root, catalog=asset_catalog)
+    identity = generator_identity(
+        tool_version=tool_version,
+        revision=tool_revision,
+        compiler_contract_version=compiler_contract_version,
+    )
+    if runtime_sha256 is not None:
+        identity["runtime_sha256"] = runtime_sha256
     payload = {
         "request_hash": request_hash(normalized_request),
         "recipe_id": recipe.get("recipe_id"),
@@ -57,8 +68,8 @@ def generation_digest(
         "policy_version": policy.get("policy_version", 1),
         "policy_sha256": hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
         "asset_hashes": asset_hashes,
-        "tool_version": tool_version,
         "schema_version": schema_version,
+        **identity,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -83,18 +94,63 @@ def production_dir(base_dir: Path, effect_id: str) -> Path:
     return base_dir / "production" / effect_id
 
 
-def acquire_promotion_lock(target: Path, job_id: str, timeout_sec: float = 30.0) -> Path:
-    target.mkdir(parents=True, exist_ok=True)
-    lock_path = target / LOCK_NAME
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _lock_age_sec(lock_path: Path) -> float:
+    try:
+        return max(0.0, time.time() - lock_path.stat().st_mtime)
+    except FileNotFoundError:
+        return 0.0
+
+
+def _lock_is_stale(lock_path: Path) -> bool:
+    age = _lock_age_sec(lock_path)
+    try:
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        # A live acquirer can have created the file but not finished writing it.
+        return age > STALE_LOCK_SEC
+    pid = payload.get("pid")
+    created = float(payload.get("time", 0.0) or 0.0)
+    if created:
+        age = max(age, time.time() - created)
+    if isinstance(pid, int) and not _pid_alive(pid):
+        return True
+    if age > STALE_LOCK_SEC and not isinstance(pid, int):
+        return True
+    return False
+
+
+def acquire_promotion_lock(lock_path: Path, job_id: str, timeout_sec: float = 30.0) -> Path:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.time() + timeout_sec
     payload = json.dumps({"job_id": job_id, "pid": os.getpid(), "time": time.time()}) + "\n"
+    encoded = payload.encode("utf-8")
     while True:
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(payload)
+            try:
+                os.write(fd, encoded)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
             return lock_path
         except FileExistsError:
+            if _lock_is_stale(lock_path):
+                lock_path.unlink(missing_ok=True)
+                continue
             if time.time() > deadline:
                 raise TimeoutError(f"Promotion lock held too long: {lock_path}")
             time.sleep(0.05)
@@ -138,8 +194,9 @@ def check_promotion_conflict(production: Path, generation_id: str, allow_replace
 def promote_candidate(candidate_dir: Path, production_dir: Path, metadata: dict[str, Any], manifest_path: Path | None = None) -> Path:
     import shutil
 
-    lock = acquire_promotion_lock(production_dir.parent, str(metadata.get("job_id", "promote")))
-    staging = production_dir.with_name(production_dir.name + ".staging")
+    job_token = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(metadata.get("job_id", "promote")))[:64] or "promote"
+    lock = acquire_promotion_lock(production_dir.with_name(production_dir.name + ".promotion.lock"), job_token)
+    staging = production_dir.with_name(production_dir.name + f".staging-{job_token}")
     backup = production_dir.with_name(production_dir.name + ".bak")
     promoted = False
     try:

@@ -16,6 +16,8 @@ from .model import add_layer, get_path, migrate_document, parse_value, read_docu
 from .presets import list_presets, make_preset
 from .renderer import render_preview
 from .schema import LAYER_TYPES, MESH_ASSET_EXTENSIONS, schema_description, default_document
+from .service.capabilities import _policy_capability, _recipe_capability, capabilities
+from .service.gates import engine_gate_result
 from .service.pipeline import forge, plan
 from .service.policy import list_policies, load_policy, policy_ref
 from .service.promotion import is_managed_document
@@ -50,6 +52,7 @@ def _parser() -> CLIParser:
     create.add_argument("--seed", type=int, default=None)
     create.add_argument("--preset", choices=list_presets())
     create.add_argument("--force", action="store_true")
+    create.add_argument("--unsafe-direct-edit", action="store_true", help="Allow mutation of service-managed production documents.")
 
     inspect = sub.add_parser("inspect", help="Inspect a document or directory.")
     inspect.add_argument("target")
@@ -123,6 +126,7 @@ def _parser() -> CLIParser:
     migrate.add_argument("target")
     migrate.add_argument("--in-place", action="store_true")
     migrate.add_argument("--recursive", action="store_true")
+    migrate.add_argument("--unsafe-direct-edit", action="store_true", help="Allow mutation of service-managed production documents.")
 
     diff = sub.add_parser("diff", help="Produce a semantic diff keyed by layer IDs.")
     diff.add_argument("old")
@@ -139,13 +143,14 @@ def _parser() -> CLIParser:
     preset.add_argument("name", nargs="?")
     preset.add_argument("--output", default=None)
     preset.add_argument("--force", action="store_true")
+    preset.add_argument("--unsafe-direct-edit", action="store_true", help="Allow mutation of service-managed production documents.")
 
     forge_cmd = sub.add_parser("forge", help="Generate production-ready VFX from a semantic request.")
     forge_cmd.add_argument("--request", required=True, help="Path to request JSON or '-' for stdin.")
     forge_cmd.add_argument("--policy", default="default")
     forge_cmd.add_argument("--workspace", default="build/service")
     forge_cmd.add_argument("--no-export", action="store_true")
-    forge_cmd.add_argument("--export-mode", choices=["standalone", "library"], default="standalone")
+    forge_cmd.add_argument("--export-mode", choices=["standalone", "library"], default=None)
     forge_cmd.add_argument("--resource-root", default=None)
     forge_cmd.add_argument("--shared-runtime", default=None, help="Shared runtime script path for library export.")
     forge_cmd.add_argument("--asset-root", default=None, help="Host/project asset root used for policy and generation identity.")
@@ -162,6 +167,9 @@ def _parser() -> CLIParser:
     policies = sub.add_parser("policies", help="List or show service policies.")
     policies.add_argument("action", choices=["list", "show"])
     policies.add_argument("name", nargs="?")
+
+    capabilities_cmd = sub.add_parser("capabilities", help="Describe machine-facing recipe and policy capabilities.")
+    capabilities_cmd.add_argument("--policy", default=None)
 
     for mutating in (add, remove, update, set_command, texture, mesh, event):
         mutating.add_argument("--unsafe-direct-edit", action="store_true", help="Allow mutation of service-managed production documents.")
@@ -191,13 +199,17 @@ def _assignments(values: list[str]) -> list[tuple[str, Any]]:
     return parsed
 
 
-def _commit(path: Path, document: dict[str, Any], unsafe_direct_edit: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+def _assert_source_mutation_allowed(path: Path, unsafe_direct_edit: bool = False) -> None:
     if is_managed_document(path) and not unsafe_direct_edit:
         raise VFXForgeError(
             f"Refusing to mutate service-managed document: {path}. Use forge or --unsafe-direct-edit.",
             "MANAGED_DOCUMENT",
             str(path),
         )
+
+
+def _commit(path: Path, document: dict[str, Any], unsafe_direct_edit: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+    _assert_source_mutation_allowed(path, unsafe_direct_edit)
     validation = validate_document(document, path.parent)
     if not validation["valid"]:
         return validation, document
@@ -223,6 +235,7 @@ def _targets(target: str | Path) -> list[Path]:
 
 def _cmd_create(args: argparse.Namespace) -> dict[str, Any]:
     path = Path(args.path)
+    _assert_source_mutation_allowed(path, args.unsafe_direct_edit)
     if path.exists() and not args.force:
         raise VFXForgeError(f"Refusing to overwrite existing file: {path}. Use --force if intentional.", "FILE_EXISTS", str(path))
     effect_id = args.id or path.name.removesuffix(".vfx.json").replace(" ", "_").lower()
@@ -350,6 +363,7 @@ def _cmd_add_texture(args: argparse.Namespace) -> dict[str, Any]:
     if source.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
         raise VFXForgeError("Supported textures are PNG, JPG/JPEG, and WebP.", "UNSUPPORTED_TEXTURE")
     document = read_document(path)
+    _assert_source_mutation_allowed(path, getattr(args, "unsafe_direct_edit", False))
     asset_dir = path.parent / "assets" / "textures"
     asset_dir.mkdir(parents=True, exist_ok=True)
     target = asset_dir / source.name
@@ -383,6 +397,7 @@ def _cmd_add_mesh(args: argparse.Namespace) -> dict[str, Any]:
             str(source),
         )
     document = read_document(path)
+    _assert_source_mutation_allowed(path, getattr(args, "unsafe_direct_edit", False))
     asset_dir = path.parent / "assets" / "models"
     asset_dir.mkdir(parents=True, exist_ok=True)
     target = asset_dir / source.name
@@ -469,11 +484,21 @@ def _cmd_export(args: argparse.Namespace) -> dict[str, Any]:
                 resource_root=args.resource_root,
                 shared_runtime_path=args.shared_runtime,
             )
-            smoke = exported.get("smoke_test", {})
-            item_success = smoke.get("status") != "failed"
+            smoke_passed, smoke_payload, smoke_code = engine_gate_result(args.mode, exported)
+            item_success = smoke_passed or (
+                not args.no_smoke_test and smoke_payload.get("status") == "skipped" and args.mode == "standalone"
+            )
+            if args.no_smoke_test:
+                item_success = True
             item = {"path": str(source), "success": item_success, "export": exported}
             if not item_success:
-                smoke_error = {"severity": "error", "code": "EXPORT_SMOKE_FAILED", "path": str(output), "message": "Godot export smoke test failed; inspect the smoke_test details in export_manifest.json."}
+                smoke_error = {
+                    "severity": "error",
+                    "code": smoke_code or "EXPORT_SMOKE_FAILED",
+                    "path": str(output),
+                    "message": "Godot export validation did not pass; inspect export_manifest.json.",
+                    "runtime_validation": smoke_payload,
+                }
                 result["errors"].append({**smoke_error, "file": str(source)})
                 item["errors"] = [smoke_error]
             items.append(item)
@@ -496,6 +521,7 @@ def _cmd_migrate(args: argparse.Namespace) -> dict[str, Any]:
             validation = validate_document(document, source.parent)
             item = {"path": str(source), "schema_version": document.get("schema_version"), "validation": validation, "written": False}
             if args.in_place:
+                _assert_source_mutation_allowed(source, getattr(args, "unsafe_direct_edit", False))
                 if not validation["valid"]:
                     result["errors"].extend([{**error, "file": str(source)} for error in validation["errors"]])
                 else:
@@ -550,7 +576,7 @@ def _explain(topic: str) -> dict[str, Any]:
             "commands": [
                 "create", "inspect", "validate", "list-layers", "add-layer", "remove-layer",
                 "update-layer", "set", "add-texture", "add-mesh", "add-event", "render-preview", "export",
-                "migrate", "diff", "explain", "schema", "forge", "plan", "recipes", "policies",
+                "migrate", "diff", "explain", "schema",                 "forge", "plan", "recipes", "policies", "capabilities",
             ],
             "machine_mode": "Append --json to any command. Output uses success, command, errors, warnings, and artifacts.",
         }
@@ -614,7 +640,7 @@ def _cmd_recipes(args: argparse.Namespace) -> dict[str, Any]:
     if not args.name:
         raise VFXForgeError("recipes show requires a recipe id.", "MISSING_RECIPE")
     recipe = load_recipe(args.name)
-    result["data"] = {"recipe": recipe_ref(recipe), "matcher": recipe.get("matcher"), "description": recipe.get("description")}
+    result["data"] = {"recipe": _recipe_capability(recipe)}
     return result
 
 
@@ -626,7 +652,7 @@ def _cmd_policies(args: argparse.Namespace) -> dict[str, Any]:
     if not args.name:
         raise VFXForgeError("policies show requires a policy id.", "MISSING_POLICY")
     policy = load_policy(args.name)
-    result["data"] = {"policy": policy_ref(args.name), "description": policy.get("description"), "defaults": policy.get("defaults")}
+    result["data"] = {"policy": _policy_capability(policy)}
     return result
 
 
@@ -640,6 +666,7 @@ def _cmd_preset(args: argparse.Namespace) -> dict[str, Any]:
     if not args.output:
         raise VFXForgeError("preset create requires --output.", "MISSING_OUTPUT")
     path = Path(args.output)
+    _assert_source_mutation_allowed(path, getattr(args, "unsafe_direct_edit", False))
     if path.exists() and not args.force:
         raise VFXForgeError(f"Refusing to overwrite existing file: {path}. Use --force.", "FILE_EXISTS", str(path))
     document = make_preset(args.name)
@@ -651,6 +678,12 @@ def _cmd_preset(args: argparse.Namespace) -> dict[str, Any]:
         write_document(path, document)
         result["artifacts"].append(str(path))
     result["data"] = {"document_id": document["id"], "validation": validation}
+    return result
+
+
+def _cmd_capabilities(args: argparse.Namespace) -> dict[str, Any]:
+    result = _envelope("capabilities")
+    result["data"] = capabilities(args.policy)
     return result
 
 
@@ -678,6 +711,7 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         "plan": _cmd_plan,
         "recipes": _cmd_recipes,
         "policies": _cmd_policies,
+        "capabilities": _cmd_capabilities,
     }
     if not args.command:
         raise VFXForgeError("A command is required. Use vfxforge explain for the command map.", "MISSING_COMMAND")
@@ -701,7 +735,7 @@ def _human(result: dict[str, Any]) -> None:
         for item in result["items"]:
             print(f"  {item.get('path')}: {'PASS' if item.get('success', item.get('valid', True)) else 'FAIL'}")
     data = result.get("data")
-    if data is not None and result.get("command") in {"inspect", "list-layers", "diff", "explain", "schema", "preset"}:
+    if data is not None and result.get("command") in {"inspect", "list-layers", "diff", "explain", "schema", "preset", "recipes", "policies", "capabilities"}:
         print(json.dumps(data, indent=2, ensure_ascii=False))
 
 

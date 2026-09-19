@@ -9,6 +9,8 @@
   },
   "priority": 100,
   "seed": 71127,
+  "supported_gameplay": [],
+  "consumed_gameplay": [],
   "document": {
     "schema_version": 1,
     "name": "Lightning Beam",

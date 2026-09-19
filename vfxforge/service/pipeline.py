@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+from ..errors import RecipeBindingError
 from ..exporter import export_document
 from ..model import write_document
 from ..validation import validate_document
 from .autocorrect import autocorrect_document
-from .compiler import compile_recipe
-from .policy import allowed_budget_profile, load_policy, policy_ceilings, policy_ref
+from .compiler import compile_recipe_with_ledger, unconsumed_semantics
+from .gates import engine_gate_result
+from .policy import allowed_budget_profile, load_policy, policy_ceilings, policy_ref, resolve_export_settings
 from .preview_suite import render_preview_suite
 from .promotion import (
     create_job_workspace,
@@ -32,24 +35,6 @@ def _policy_requires_export(policy: dict[str, Any]) -> bool:
 
 def _policy_requires_engine(policy: dict[str, Any]) -> bool:
     return bool(policy.get("require_engine_validation", policy.get("require_godot_smoke", False)))
-
-
-def _engine_gate_result(export_mode: str, export_result: dict[str, Any] | None) -> tuple[bool, dict[str, Any], str | None]:
-    if export_result is None:
-        return False, {}, "REQUIRED_HOST_VALIDATION_UNAVAILABLE"
-    if export_mode == "standalone":
-        smoke = export_result.get("smoke_test", {})
-        if smoke.get("status") == "passed":
-            return True, smoke, None
-        if smoke.get("status") == "skipped":
-            return False, smoke, "REQUIRED_ENGINE_VALIDATION_UNAVAILABLE"
-        return False, smoke, "EXPORT_SMOKE_FAILED"
-    host_smoke = export_result.get("host_smoke_test", {})
-    if host_smoke.get("status") == "passed":
-        return True, host_smoke, None
-    if host_smoke.get("status") == "skipped":
-        return False, host_smoke, "REQUIRED_HOST_VALIDATION_UNAVAILABLE"
-    return False, host_smoke, "HOST_LIBRARY_SMOKE_FAILED"
 
 
 def plan(raw_request: dict[str, Any], policy_id: str = "default") -> dict[str, Any]:
@@ -97,7 +82,7 @@ def forge(
     policy_id: str = "default",
     workspace: str | Path = "build/service",
     export: bool = True,
-    export_mode: str = "standalone",
+    export_mode: str | None = None,
     resource_root: str | None = None,
     shared_runtime_path: str | None = None,
     allow_replace: bool = False,
@@ -121,6 +106,32 @@ def forge(
     semantic_review = validate_recipe_semantics(normalized, recipe, policy)
     if semantic_review:
         return make_result(ForgeStatus.NEEDS_REVIEW, effect_id, policy=policy_ref(policy_id), recipe=recipe_ref(recipe), review_reasons=semantic_review)
+    export_settings = resolve_export_settings(
+        policy,
+        effect_id,
+        export_mode=export_mode,
+        resource_root=resource_root,
+        shared_runtime_path=shared_runtime_path,
+    )
+    if export_settings["mismatch"]:
+        return make_result(
+            ForgeStatus.NEEDS_REVIEW,
+            effect_id,
+            policy=policy_ref(policy_id),
+            recipe=recipe_ref(recipe),
+            review_reasons=[{
+                "code": "POLICY_EXPORT_MODE_MISMATCH",
+                "message": (
+                    f"Policy requires export mode '{export_settings['required_export_mode']}', "
+                    f"got '{export_mode}'."
+                ),
+                "required_export_mode": export_settings["required_export_mode"],
+                "requested_export_mode": export_mode,
+            }],
+        )
+    export_mode = str(export_settings["export_mode"])
+    resource_root = export_settings["resource_root"]
+    shared_runtime_path = export_settings["shared_runtime_path"]
     if dry_run:
         return plan(raw_request, policy_id)
     if _policy_requires_export(policy) and not export:
@@ -142,7 +153,29 @@ def forge(
     workspace_path = Path(workspace).resolve()
     job, job_id = create_job_workspace(workspace_path, effect_id, gen_digest)
     candidate_doc_path = job / "candidate" / f"{effect_id}.vfx.json"
-    compiled = compile_recipe(normalized, recipe, policy)
+    request_path = job / "candidate" / "normalized_request.json"
+    request_path.write_text(json.dumps(normalized, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        compiled, consumption = compile_recipe_with_ledger(normalized, recipe, policy)
+    except RecipeBindingError as exc:
+        return make_result(
+            ForgeStatus.FAILED,
+            effect_id,
+            job_id=job_id,
+            recipe=recipe_ref(recipe),
+            policy=policy_ref(policy_id),
+            errors=[{"code": exc.code, "message": exc.message, "path": exc.path}],
+        )
+    unconsumed = unconsumed_semantics(normalized, recipe, consumption)
+    if unconsumed:
+        return make_result(
+            ForgeStatus.FAILED,
+            effect_id,
+            job_id=job_id,
+            recipe=recipe_ref(recipe),
+            policy=policy_ref(policy_id),
+            errors=unconsumed,
+        )
     usage = normalized.get("context", {}).get("usage", "normal_combat")
     ceilings = policy_ceilings(policy, usage)
     corrected, corrections, correction_review = autocorrect_document(compiled, policy, usage, normalized, recipe)
@@ -190,10 +223,10 @@ def forge(
                 policy_ceilings=ceilings,
                 project_dir=project_dir,
             )
-            passed, runtime_validation, gate_code = _engine_gate_result(export_mode, export_result)
+            passed, runtime_validation, gate_code = engine_gate_result(export_mode, export_result)
             if _policy_requires_engine(policy) and not passed:
                 return make_result(
-                    ForgeStatus.NEEDS_REVIEW if gate_code == "REQUIRED_HOST_VALIDATION_UNAVAILABLE" else ForgeStatus.FAILED,
+                    ForgeStatus.NEEDS_REVIEW if gate_code in {"REQUIRED_HOST_VALIDATION_UNAVAILABLE", "REQUIRED_ENGINE_VALIDATION_UNAVAILABLE"} else ForgeStatus.FAILED,
                     effect_id,
                     job_id=job_id,
                     recipe=recipe_ref(recipe),
@@ -233,9 +266,16 @@ def forge(
         shared_runtime_path=shared_runtime_path,
         asset_root=asset_root,
         asset_catalog=asset_catalog,
+        allow_replace=allow_replace,
+        export_requested=export,
+        consumption=consumption,
     )
     manifest_path = job / "forge_manifest.json"
     write_manifest(manifest_path, provenance_payload)
+    if export_result:
+        export_request = Path(str(export_result.get("output", ""))) / "normalized_request.json"
+        if export_request.parent.is_dir():
+            export_request.write_text(request_path.read_text(encoding="utf-8"), encoding="utf-8")
     promotion_metadata = {
         "request_hash": request_hash(normalized),
         "generation_digest": gen_digest,
@@ -250,6 +290,34 @@ def forge(
             promote_candidate(job / "candidate" / "export", production, promotion_metadata, manifest_path)
         else:
             promote_candidate(job / "candidate", production, promotion_metadata, manifest_path)
+    except TimeoutError as exc:
+        return make_result(
+            ForgeStatus.NEEDS_REVIEW,
+            effect_id,
+            job_id=job_id,
+            recipe=recipe_ref(recipe),
+            policy=policy_ref(policy_id),
+            seed=corrected.get("seed"),
+            corrections=corrections,
+            validation=revalidation,
+            previews=previews,
+            review_reasons=[{"code": "PROMOTION_LOCK_TIMEOUT", "message": str(exc)}],
+            artifacts={"candidate_document": str(candidate_doc_path), "job_workspace": str(job)},
+        )
+    except OSError as exc:
+        return make_result(
+            ForgeStatus.FAILED,
+            effect_id,
+            job_id=job_id,
+            recipe=recipe_ref(recipe),
+            policy=policy_ref(policy_id),
+            seed=corrected.get("seed"),
+            corrections=corrections,
+            validation=revalidation,
+            previews=previews,
+            errors=[{"code": "PROMOTION_IO_FAILED", "message": str(exc)}],
+            artifacts={"candidate_document": str(candidate_doc_path), "job_workspace": str(job)},
+        )
     except RuntimeError as exc:
         return make_result(
             ForgeStatus.NEEDS_REVIEW,

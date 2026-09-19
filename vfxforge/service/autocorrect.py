@@ -93,8 +93,8 @@ def _reduce_lights(document: dict[str, Any], ceiling: int, roles: dict[str, dict
         return entries
     optional = [layer for layer in lights if not _is_required_layer(str(layer.get("id", "")), roles)]
     optional.sort(key=lambda item: _correction_priority(str(item.get("id", "")), roles), reverse=True)
-    to_disable = optional or lights[ceiling:]
-    for layer in to_disable[len(to_disable) - max(0, len(lights) - ceiling):]:
+    need = max(0, len(lights) - ceiling)
+    for layer in optional[:need]:
         before = layer.get("enabled", True)
         layer["enabled"] = False
         entries.append(_ledger_entry(

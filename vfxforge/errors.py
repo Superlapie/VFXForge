@@ -23,3 +23,7 @@ class ValidationError(VFXForgeError):
 
 class ExportError(VFXForgeError):
     """An export or preview artifact could not be produced."""
+
+
+class RecipeBindingError(VFXForgeError):
+    """A recipe binding target does not exist on the compiled document."""

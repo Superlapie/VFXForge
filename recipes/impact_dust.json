@@ -9,6 +9,8 @@
   },
   "priority": 90,
   "seed": 22380,
+  "supported_gameplay": [],
+  "consumed_gameplay": [],
   "document": {
     "schema_version": 1,
     "name": "Dust Burst",

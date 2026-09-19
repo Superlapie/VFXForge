@@ -1,0 +1,63 @@
+"""Agent-facing capability discovery for recipes and policies."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .policy import list_policies, load_policy
+from .selector import list_recipes, load_recipe
+
+
+def _recipe_capability(recipe: dict[str, Any]) -> dict[str, Any]:
+    matcher = recipe.get("matcher", {}) if isinstance(recipe.get("matcher"), dict) else {}
+    required = [item for item in (recipe.get("required_gameplay") or []) if isinstance(item, str)]
+    supported = [item for item in (recipe.get("supported_gameplay") or []) if isinstance(item, str)]
+    consumed = [item for item in (recipe.get("consumed_gameplay") or []) if isinstance(item, str)]
+    optional = [item for item in supported if item not in required]
+    return {
+        "id": recipe.get("recipe_id"),
+        "version": recipe.get("recipe_version", 1),
+        "description": recipe.get("description", ""),
+        "matches": matcher,
+        "required": required,
+        "optional": optional,
+        "consumed": consumed,
+        "unsupported_parameters_are_errors": not bool(recipe.get("allow_extra_gameplay", False)),
+        "timing": recipe.get("timing", {}) if isinstance(recipe.get("timing"), dict) else {},
+        "bindings": recipe.get("bindings", []) if isinstance(recipe.get("bindings"), list) else [],
+    }
+
+
+def _policy_capability(policy: dict[str, Any]) -> dict[str, Any]:
+    runtime_gate = str(policy.get("runtime_gate") or "")
+    required_mode = policy.get("required_export_mode")
+    if not required_mode and runtime_gate == "host_project":
+        required_mode = "library"
+    return {
+        "id": policy.get("policy_id"),
+        "version": policy.get("policy_version", 1),
+        "description": policy.get("description", ""),
+        "defaults": policy.get("defaults", {}),
+        "contexts": policy.get("contexts", {}),
+        "semantic_bounds": policy.get("semantic_bounds", {}),
+        "require_export_for_production": bool(policy.get("require_export_for_production", policy.get("require_godot_smoke", False))),
+        "require_engine_validation": bool(policy.get("require_engine_validation", policy.get("require_godot_smoke", False))),
+        "runtime_gate": runtime_gate or ("host_project" if required_mode == "library" else "standalone"),
+        "required_export_mode": required_mode or "standalone",
+        "resource_root_template": policy.get("resource_root_template"),
+        "shared_runtime_path": policy.get("shared_runtime_path"),
+        "preview_cameras": policy.get("preview_cameras", ["mmo"]),
+    }
+
+
+def capabilities(policy_id: str | None = None) -> dict[str, Any]:
+    policy_ids = [policy_id] if policy_id else list_policies()
+    policies = [_policy_capability(load_policy(item)) for item in policy_ids]
+    recipes = [_recipe_capability(load_recipe(item)) for item in list_recipes()]
+    selected = policies[0] if policy_id and policies else None
+    return {
+        "capabilities_version": 1,
+        "policy": selected,
+        "policies": policies,
+        "recipes": recipes,
+    }
