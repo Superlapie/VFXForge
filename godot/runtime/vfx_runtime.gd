@@ -406,7 +406,7 @@ func _create_mesh_effect(layer: Dictionary) -> MeshInstance3D:
     var mesh_name := str(properties.get("mesh", "sphere"))
     if custom_mesh == null and mesh_name == "box":
         var box := BoxMesh.new()
-        box.size = authored_size
+        box.size = Vector3.ONE
         mesh_instance.mesh = box
     elif custom_mesh == null and mesh_name == "torus":
         var torus := TorusMesh.new()
@@ -595,9 +595,10 @@ func _material(layer: Dictionary) -> StandardMaterial3D:
         "multiply": BaseMaterial3D.BLEND_MODE_MUL
     }.get(blend, BaseMaterial3D.BLEND_MODE_ADD)
     material.billboard_mode = {
-        "enabled": BaseMaterial3D.BILLBOARD_ENABLED,
         "disabled": BaseMaterial3D.BILLBOARD_DISABLED,
-        "y": BaseMaterial3D.BILLBOARD_FIXED_Y,
+        "enabled": BaseMaterial3D.BILLBOARD_ENABLED,
+        "y_billboard": BaseMaterial3D.BILLBOARD_FIXED_Y,
+        "particle": BaseMaterial3D.BILLBOARD_PARTICLES,
     }.get(str(settings.get("billboard", "enabled")), BaseMaterial3D.BILLBOARD_ENABLED)
     if str(layer.get("type", "")) in ["particle", "mesh_particle"]:
         material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES

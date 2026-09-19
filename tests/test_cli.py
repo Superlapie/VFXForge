@@ -8,6 +8,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from vfxforge.cli import main
+from vfxforge.model import write_document
+from vfxforge.schema import default_document
 
 
 def run_cli(*arguments: str) -> tuple[int, dict]:
@@ -18,6 +20,18 @@ def run_cli(*arguments: str) -> tuple[int, dict]:
 
 
 class CLITests(unittest.TestCase):
+    def test_add_texture_does_not_leave_asset_when_document_stays_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "broken.vfx.json"
+            texture = Path(temporary) / "spark.png"
+            texture.write_bytes(b"\x89PNG\r\n\x1a\n")
+            invalid = default_document("broken", "Broken", -1.0)
+            write_document(path, invalid)
+            code, added = run_cli("add-texture", str(path), "--source", str(texture))
+            self.assertNotEqual(code, 0)
+            self.assertFalse(added["success"])
+            self.assertFalse((path.parent / "assets" / "textures" / "spark.png").exists())
+
     def test_create_modify_validate_inspect_and_diff(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "cli_effect.vfx.json"

@@ -6,6 +6,7 @@ import argparse
 import json
 import shutil
 import sys
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
 
@@ -355,6 +356,41 @@ def _cmd_set(args: argparse.Namespace) -> dict[str, Any]:
     return _cmd_mutate(args, mutate)
 
 
+def _resolve_asset_target(source: Path, asset_dir: Path) -> Path:
+    target = asset_dir / source.name
+    if target.exists() and target.read_bytes() != source.read_bytes():
+        target = asset_dir / f"{source.stem}_{source.stat().st_size}{source.suffix}"
+    return target
+
+
+def _commit_asset_ingest(
+    path: Path,
+    document: dict[str, Any],
+    *,
+    asset_dir: Path,
+    source: Path,
+    dependency_key: str,
+    reference: str,
+) -> tuple[dict[str, Any], list[str]]:
+    proposed = deepcopy(document)
+    refs = proposed.setdefault("dependencies", {}).setdefault(dependency_key, [])
+    if reference not in refs:
+        refs.append(reference)
+    target = _resolve_asset_target(source, asset_dir)
+    created_new_asset = False
+    if not target.exists() or target.read_bytes() != source.read_bytes():
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        created_new_asset = True
+    validation = validate_document(proposed, path.parent)
+    if not validation["valid"]:
+        if created_new_asset and target.exists():
+            target.unlink(missing_ok=True)
+        return validation, []
+    write_document(path, proposed)
+    return validation, [str(path), str(target)]
+
+
 def _cmd_add_texture(args: argparse.Namespace) -> dict[str, Any]:
     path = Path(args.path)
     source = Path(args.source).resolve()
@@ -365,22 +401,22 @@ def _cmd_add_texture(args: argparse.Namespace) -> dict[str, Any]:
     document = read_document(path)
     _assert_source_mutation_allowed(path, getattr(args, "unsafe_direct_edit", False))
     asset_dir = path.parent / "assets" / "textures"
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    target = asset_dir / source.name
-    if target.exists() and target.read_bytes() != source.read_bytes():
-        target = asset_dir / f"{source.stem}_{source.stat().st_size}{source.suffix}"
-    shutil.copy2(source, target)
+    target = _resolve_asset_target(source, asset_dir)
     reference = args.ref or target.relative_to(path.parent).as_posix()
-    refs = document.setdefault("dependencies", {}).setdefault("textures", [])
-    if reference not in refs:
-        refs.append(reference)
-    validation, _ = _commit(path, document, getattr(args, "unsafe_direct_edit", False))
+    validation, artifacts = _commit_asset_ingest(
+        path,
+        document,
+        asset_dir=asset_dir,
+        source=source,
+        dependency_key="textures",
+        reference=reference,
+    )
     result = _envelope("add-texture")
     result["warnings"] = validation["warnings"]
     result["errors"] = validation["errors"]
     result["success"] = validation["valid"]
     if result["success"]:
-        result["artifacts"] = [str(path), str(target)]
+        result["artifacts"] = artifacts
         result["data"] = {"reference": reference, "validation": validation}
     return result
 
@@ -399,22 +435,22 @@ def _cmd_add_mesh(args: argparse.Namespace) -> dict[str, Any]:
     document = read_document(path)
     _assert_source_mutation_allowed(path, getattr(args, "unsafe_direct_edit", False))
     asset_dir = path.parent / "assets" / "models"
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    target = asset_dir / source.name
-    if target.exists() and target.read_bytes() != source.read_bytes():
-        target = asset_dir / f"{source.stem}_{source.stat().st_size}{source.suffix}"
-    shutil.copy2(source, target)
+    target = _resolve_asset_target(source, asset_dir)
     reference = args.ref or target.relative_to(path.parent).as_posix()
-    refs = document.setdefault("dependencies", {}).setdefault("meshes", [])
-    if reference not in refs:
-        refs.append(reference)
-    validation, _ = _commit(path, document, getattr(args, "unsafe_direct_edit", False))
+    validation, artifacts = _commit_asset_ingest(
+        path,
+        document,
+        asset_dir=asset_dir,
+        source=source,
+        dependency_key="meshes",
+        reference=reference,
+    )
     result = _envelope("add-mesh")
     result["warnings"] = validation["warnings"]
     result["errors"] = validation["errors"]
     result["success"] = validation["valid"]
     if result["success"]:
-        result["artifacts"] = [str(path), str(target)]
+        result["artifacts"] = artifacts
         result["data"] = {"reference": reference, "validation": validation}
     return result
 

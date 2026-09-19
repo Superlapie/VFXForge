@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..schema import LAYER_TYPES
 from .matrix import load_canonical_request, load_recipe_matrix
 from .policy_target import target_policy_bindings
 from .request import request_contract_dict
 from .policy import list_policies, load_policy
-from .runtime_conformance import runtime_capability_contract
+from .runtime_conformance import RUNTIME_PRODUCTION_LAYER_TYPES, SCHEMA_ONLY_LAYER_TYPES, runtime_capability_contract
 from .selector import list_recipes, load_recipe
 
 
@@ -78,6 +79,11 @@ def capabilities(policy_id: str | None = None) -> dict[str, Any]:
         "capabilities_version": 2,
         "request_contract": _request_contract(),
         "target_policy_bindings": target_policy_bindings(),
+        "layer_support": {
+            "schema_layer_types": list(LAYER_TYPES),
+            "runtime_production_layer_types": sorted(RUNTIME_PRODUCTION_LAYER_TYPES),
+            "schema_only_layer_types": sorted(SCHEMA_ONLY_LAYER_TYPES),
+        },
         "runtime": runtime_capability_contract(),
         "recipe_templates": _recipe_templates(),
         "policy": selected,

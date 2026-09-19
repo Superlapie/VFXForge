@@ -338,6 +338,27 @@ class RuntimeConformanceTests(unittest.TestCase):
         self.assertEqual(result["status"], ForgeStatus.NEEDS_REVIEW.value)
         self.assertTrue(any(item["code"] == "POLICY_TARGET_MISMATCH" for item in result["review_reasons"]))
 
+    def test_invalid_attachment_type_is_rejected(self) -> None:
+        from vfxforge.service.request import validate_request
+
+        request = _read_request("trail_weapon.vfxrequest.json")
+        request["gameplay"]["attachment"] = 123
+        document, errors = validate_request(request)
+        self.assertIsNone(document)
+        self.assertTrue(any(item["code"] == "INVALID_GAMEPLAY_ATTACHMENT" for item in errors))
+
+    def test_light_material_blend_mode_is_not_production_ready(self) -> None:
+        request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
+        recipe = load_recipe("impact.fire")
+        broken = deepcopy(recipe)
+        light = next(layer for layer in broken["document"]["layers"] if layer["type"] == "light")
+        light["material"]["blend_mode"] = "multiply"
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("vfxforge.service.pipeline.select_recipe", return_value=(broken, [broken], [])):
+                result = forge(_read_request("fire_impact.vfxrequest.json"), policy_id="default", workspace=tmp, export=False)
+        self.assertFalse(result["production_ready"])
+        self.assertTrue(any(item["code"] == "UNSUPPORTED_RUNTIME_MATERIAL" for item in result["errors"]))
+
 
 class CapabilitiesDiscoveryTests(unittest.TestCase):
     def test_agent_can_discover_enigma_requirements_from_json(self) -> None:
@@ -353,6 +374,12 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         self.assertIn("target_policy_bindings", payload)
         self.assertEqual(payload["target_policy_bindings"]["enigma"], "enigma")
         self.assertIsNone(payload["target_policy_bindings"]["generic"])
+        self.assertIn("layer_support", payload)
+        self.assertIn("mesh_particle", payload["runtime"]["layers"])
+        self.assertIn("audio_marker", payload["layer_support"]["schema_only_layer_types"])
+        radius = payload["request_contract"]["gameplay"]["radius_tiles"]
+        self.assertEqual(radius["minimum"], 0.25)
+        self.assertEqual(radius["maximum"], 64.0)
         self.assertIn("recipe_templates", payload)
         self.assertIn("runtime", payload)
         self.assertGreaterEqual(len(payload["recipe_templates"]), 15)

@@ -138,6 +138,12 @@ def validate_request(raw: Any) -> tuple[dict[str, Any] | None, list[dict[str, An
         loop = gameplay.get("loop")
         if loop is not None and not isinstance(loop, bool):
             errors.append(_issue("INVALID_GAMEPLAY_LOOP", "gameplay.loop", "loop must be boolean.", loop))
+        attachment = gameplay.get("attachment")
+        if attachment is not None:
+            if not isinstance(attachment, str):
+                errors.append(_issue("INVALID_GAMEPLAY_ATTACHMENT", "gameplay.attachment", "attachment must be a string.", attachment))
+            elif not attachment.strip():
+                errors.append(_issue("INVALID_GAMEPLAY_ATTACHMENT", "gameplay.attachment", "attachment must be a non-empty string.", attachment))
     seed = raw.get("seed")
     if seed is not None and (not isinstance(seed, int) or isinstance(seed, bool)):
         errors.append(_issue("INVALID_SEED", "seed", "seed must be an integer.", seed))
@@ -178,6 +184,10 @@ def normalize_request(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def request_contract_dict() -> dict[str, Any]:
+    numeric_fields: dict[str, Any] = {}
+    for key, bounds in GAMEPLAY_BOUNDS.items():
+        minimum, maximum = bounds
+        numeric_fields[key] = {"type": "number", "minimum": minimum, "maximum": maximum}
     return {
         "request_version": REQUEST_VERSION,
         "intent": {
@@ -192,16 +202,9 @@ def request_contract_dict() -> dict[str, Any]:
         },
         "gameplay": {
             "shape": sorted(GAMEPLAY_SHAPES),
-            "radius_tiles": "number > 0",
-            "width_tiles": "number > 0",
-            "length_tiles": "number > 0",
-            "source_height": "number > 0",
-            "target_distance": "number > 0",
-            "tell_ms": "number >= 50",
-            "active_ms": "number >= 0",
-            "duration_ms": "number >= 50",
-            "loop": "boolean",
-            "attachment": "string",
+            **numeric_fields,
+            "loop": {"type": "boolean"},
+            "attachment": {"type": "string", "minLength": 1},
         },
     }
 
