@@ -17,13 +17,15 @@ from vfxforge.exporter import export_document
 from vfxforge.model import write_document
 from vfxforge.schema import default_document, make_layer
 from vfxforge.schema_validate import SchemaValidationError, validate_instance
-from vfxforge.service.capabilities import capabilities
 from vfxforge.service.compiler import compile_recipe, compile_recipe_with_ledger
+from vfxforge.service.capabilities import capabilities
+from vfxforge.service.matrix import iter_recipe_requests
 from vfxforge.service.pipeline import forge
 from vfxforge.service.policy import load_policy
 from vfxforge.service.promotion import acquire_promotion_lock, generation_digest, release_promotion_lock
 from vfxforge.service.request import normalize_request
 from vfxforge.service.result import ForgeStatus
+from vfxforge.service.runtime_conformance import validate_runtime_conformance
 from vfxforge.service.selector import list_recipes, load_recipe, select_recipe
 from vfxforge.service.semantic import validate_recipe_semantics
 from vfxforge.validation import validate_document
@@ -41,6 +43,18 @@ def _read_request(name: str) -> dict:
 
 
 class EnigmaPolicyGateTests(unittest.TestCase):
+    def test_forge_status_imports_on_python310_style_enum(self) -> None:
+        self.assertEqual(ForgeStatus.READY.value, "ready")
+
+    def test_enigma_context_with_default_policy_is_rejected(self) -> None:
+        request = _read_request("fire_impact.vfxrequest.json")
+        request["context"] = {"target": "enigma", "usage": "normal_combat"}
+        with tempfile.TemporaryDirectory() as tmp:
+            result = forge(request, policy_id="default", workspace=tmp, export=False)
+        self.assertEqual(result["status"], ForgeStatus.NEEDS_REVIEW.value)
+        self.assertFalse(result["production_ready"])
+        self.assertTrue(any(item["code"] == "POLICY_TARGET_MISMATCH" for item in result["review_reasons"]))
+
     def test_enigma_default_invocation_uses_library_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             captured = {}
@@ -127,6 +141,7 @@ class GameplayRejectionMatrixTests(unittest.TestCase):
 class SemanticConsumptionTests(unittest.TestCase):
     def test_broken_binding_target_cannot_be_ready(self) -> None:
         request = normalize_request(_read_request("trail_weapon.vfxrequest.json"))
+        request.setdefault("context", {})["target"] = "generic"
         recipe = load_recipe("trail.weapon")
         broken = deepcopy(recipe)
         broken["bindings"][0]["to"] = "layers.blade_tral.properties.target"
@@ -134,8 +149,10 @@ class SemanticConsumptionTests(unittest.TestCase):
             compile_recipe(request, broken, load_policy("enigma"))
         self.assertEqual(context.exception.code, "RECIPE_BINDING_TARGET_MISSING")
         with tempfile.TemporaryDirectory() as tmp:
+            forged_request = _read_request("trail_weapon.vfxrequest.json")
+            forged_request.setdefault("context", {})["target"] = "generic"
             with patch("vfxforge.service.pipeline.select_recipe", return_value=(broken, [broken], [])):
-                result = forge(_read_request("trail_weapon.vfxrequest.json"), policy_id="default", workspace=tmp, export=False)
+                result = forge(forged_request, policy_id="default", workspace=tmp, export=False)
             self.assertFalse(result["production_ready"])
             self.assertEqual(result["status"], ForgeStatus.FAILED.value)
             self.assertTrue(any(item["code"] == "RECIPE_BINDING_TARGET_MISSING" for item in result["errors"]))
@@ -263,6 +280,27 @@ class GeneratorIdentityTests(unittest.TestCase):
         self.assertEqual(COMPILER_CONTRACT_VERSION, 2)
 
 
+class RuntimeConformanceTests(unittest.TestCase):
+    def test_unknown_emission_shape_blocks_forge(self) -> None:
+        request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
+        recipe = load_recipe("impact.fire")
+        broken = deepcopy(recipe)
+        particle = next(layer for layer in broken["document"]["layers"] if layer["type"] == "particle")
+        particle["properties"]["emission_shape"] = "hexagon"
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("vfxforge.service.pipeline.select_recipe", return_value=(broken, [broken], [])):
+                result = forge(_read_request("fire_impact.vfxrequest.json"), policy_id="default", workspace=tmp, export=False)
+        self.assertFalse(result["production_ready"])
+        self.assertTrue(any(item["code"] == "UNSUPPORTED_RUNTIME_EMISSION_SHAPE" for item in result["errors"]))
+
+    def test_every_recipe_compiled_document_matches_runtime_contract(self) -> None:
+        policy = load_policy("enigma")
+        for recipe_id, request, recipe in iter_recipe_requests():
+            document, _ledger = compile_recipe_with_ledger(normalize_request(request), recipe, policy)
+            errors = validate_runtime_conformance(document)
+            self.assertEqual(errors, [], msg=f"{recipe_id}: {errors}")
+
+
 class CapabilitiesDiscoveryTests(unittest.TestCase):
     def test_agent_can_discover_enigma_requirements_from_json(self) -> None:
         payload = capabilities("enigma")
@@ -272,6 +310,11 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         boss = next(item for item in payload["recipes"] if item["id"] == "boss.line_sweep")
         self.assertIn("gameplay.tell_ms", boss["required"])
         self.assertTrue(boss["unsupported_parameters_are_errors"])
+        self.assertEqual(payload["capabilities_version"], 2)
+        self.assertIn("request_contract", payload)
+        self.assertIn("recipe_templates", payload)
+        self.assertIn("runtime", payload)
+        self.assertGreaterEqual(len(payload["recipe_templates"]), 15)
         code, result = run_cli("capabilities", "--policy", "enigma")
         self.assertEqual(code, 0)
         self.assertEqual(result["data"]["policy"]["required_export_mode"], "library")

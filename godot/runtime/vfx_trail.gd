@@ -11,12 +11,17 @@ var phase: float = 0.0
 var preview_motion: bool = false
 var tracking_path: String = ""
 var tracking_node: Node3D = null
+var trail_segments: int = 20
+var _sample_interval: float = 0.02
+var _sample_accumulator: float = 0.0
 
 
-func configure(width: float, lifetime: float, color: Color) -> void:
+func configure(width: float, lifetime: float, color: Color, segments: int = 20) -> void:
     trail_width = maxf(0.01, width)
     trail_lifetime = maxf(0.02, lifetime)
     trail_color = color
+    trail_segments = clampi(segments, 2, 64)
+    _sample_interval = trail_lifetime / float(trail_segments)
     trail_material = StandardMaterial3D.new()
     trail_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
     trail_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -35,6 +40,8 @@ func set_tracking_node(node: Node3D) -> void:
 
 func push_sample(world_position: Vector3) -> void:
     history.push_front({"position": world_position, "age": 0.0})
+    while history.size() > trail_segments:
+        history.pop_back()
 
 
 func get_world_samples() -> PackedVector3Array:
@@ -49,14 +56,6 @@ func _resolve_tracking_node() -> Node3D:
         return tracking_node
     if tracking_path.is_empty():
         return null
-    var tree := get_tree()
-    if tree == null:
-        return null
-    var found := tree.root.find_child(tracking_path, true, false)
-    if found is Node3D:
-        tracking_node = found as Node3D
-        preview_motion = false
-        return tracking_node
     var from_self := get_node_or_null(NodePath(tracking_path))
     if from_self is Node3D:
         tracking_node = from_self as Node3D
@@ -78,7 +77,10 @@ func _sample_world_position() -> Vector3:
 
 func _process(delta: float) -> void:
     elapsed += delta
-    push_sample(_sample_world_position())
+    _sample_accumulator += delta
+    if history.is_empty() or _sample_accumulator >= _sample_interval:
+        _sample_accumulator = 0.0
+        push_sample(_sample_world_position())
     for sample in history:
         sample["age"] = float(sample.get("age", 0.0)) + delta
     while not history.is_empty() and float(history.back().get("age", 0.0)) > trail_lifetime:

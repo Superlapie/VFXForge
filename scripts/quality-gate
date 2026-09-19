@@ -88,10 +88,18 @@ assert boss['production_ready'] is False, boss
 assert any(item.get('code') == 'PRODUCTION_EXPORT_NOT_RUN' for item in boss.get('review_reasons', [])), boss
 
 quality = Path('build/quality/service')
+from vfxforge.service.policy_target import expected_policy_for_target
+default_count = 0
 for recipe_id, request, _recipe in iter_recipe_requests():
+    target = request.get('context', {}).get('target', 'generic')
+    expected = expected_policy_for_target(str(target)) if target not in ('', 'generic') else 'default'
+    if expected != 'default':
+        continue
+    default_count += 1
     result = forge(request, policy_id='default', workspace=quality / f'default_{recipe_id}', export=False)
     assert result['production_ready'] is True, (recipe_id, result.get('status'), result.get('errors') or result.get('review_reasons'))
     (quality / f'default_{recipe_id}.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+assert default_count >= 4, default_count
 print('default recipe matrix OK')
 PY
 
@@ -129,6 +137,7 @@ print('enigma library matrix OK')
 PY
 
 echo "[10/11] Wheel install smoke"
+printf '%s\n' "${VFXFORGE_REVISION:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}" > "$ROOT/vfxforge/_revision.txt"
 python3 -m pip wheel "$ROOT" -w "$QUALITY_DIR/wheel" --no-deps -q
 WHEEL_PATH=""
 for candidate in "$QUALITY_DIR/wheel"/vfxforge-*.whl; do
@@ -161,6 +170,16 @@ assert host.get('status') == 'passed', host
 default_payload = json.loads(Path('build/quality/wheel/forge.json').read_text(encoding='utf-8'))
 default_result = default_payload.get('data', default_payload)
 assert default_result.get('production_ready') is True, default_result
+import os
+import subprocess
+wheel_python = Path('build/quality/wheel/venv/bin/python')
+env = {key: value for key, value in os.environ.items() if key != 'PYTHONPATH'}
+revision = subprocess.check_output(
+    [str(wheel_python), '-c', 'from vfxforge.version import tool_revision; print(tool_revision())'],
+    env=env,
+    text=True,
+).strip()
+assert revision != 'unknown', revision
 print('installed-wheel enigma library forge OK')
 PY
 

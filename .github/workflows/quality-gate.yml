@@ -48,7 +48,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build wheel
-        run: python -m pip install build && python -m build --wheel
+        env:
+          VFXFORGE_REVISION: ${{ github.sha }}
+        run: |
+          printf '%s\n' "$VFXFORGE_REVISION" > vfxforge/_revision.txt
+          python -m pip install build && python -m build --wheel
       - name: Install Godot 4.7.2
         run: |
           mkdir -p .tools/godot
@@ -74,5 +78,7 @@ jobs:
           assert result.get("production_ready") is True, result
           host = result.get("export_validation", {}).get("host_smoke_test", {})
           assert host.get("status") == "passed", host
+          from vfxforge.version import tool_revision
+          assert tool_revision() != "unknown", tool_revision()
           print("installed-wheel enigma library forge OK")
           PY

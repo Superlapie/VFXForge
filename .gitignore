@@ -21,6 +21,7 @@ build/
 exports/
 previews/
 smoke_project/
+vfxforge/_revision.txt
 
 # OS/editor noise
 .DS_Store

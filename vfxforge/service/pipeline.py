@@ -14,6 +14,8 @@ from .autocorrect import autocorrect_document
 from .compiler import compile_recipe_with_ledger, unconsumed_semantics
 from .gates import engine_gate_result
 from .policy import allowed_budget_profile, load_policy, policy_ceilings, policy_ref, resolve_export_settings
+from .policy_target import validate_policy_target
+from .runtime_conformance import validate_runtime_conformance
 from .preview_suite import render_preview_suite
 from .promotion import (
     create_job_workspace,
@@ -96,6 +98,14 @@ def forge(
         return make_result(ForgeStatus.FAILED, effect_id, errors=errors)
     normalized = normalize_request(document)
     effect_id = normalized["effect_id"]
+    target_review = validate_policy_target(normalized, policy_id)
+    if target_review:
+        return make_result(
+            ForgeStatus.NEEDS_REVIEW,
+            effect_id,
+            policy=policy_ref(policy_id),
+            review_reasons=[target_review],
+        )
     policy = load_policy(policy_id)
     recipe, _, review = select_recipe(normalized)
     if review:
@@ -193,6 +203,19 @@ def forge(
     write_document(candidate_doc_path, corrected)
     project_dir = Path(asset_root).resolve() if asset_root else candidate_doc_path.parent
     revalidation = validate_compiled_effect(corrected, policy, usage, project_dir)
+    runtime_review = validate_runtime_conformance(corrected)
+    if runtime_review:
+        return make_result(
+            ForgeStatus.FAILED,
+            effect_id,
+            job_id=job_id,
+            recipe=recipe_ref(recipe),
+            policy=policy_ref(policy_id),
+            seed=corrected.get("seed"),
+            corrections=corrections,
+            validation=revalidation,
+            errors=runtime_review,
+        )
     if not revalidation["valid"]:
         return make_result(
             ForgeStatus.FAILED,

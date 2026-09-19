@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from .matrix import load_canonical_request, load_recipe_matrix
 from .policy import list_policies, load_policy
+from .runtime_conformance import runtime_capability_contract
 from .selector import list_recipes, load_recipe
 
 
@@ -50,13 +52,94 @@ def _policy_capability(policy: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _request_contract() -> dict[str, Any]:
+    return {
+        "request_version": 1,
+        "intent": {
+            "kind": [
+                "impact",
+                "lightning_strike",
+                "cloud",
+                "ground_telegraph",
+                "projectile",
+                "projectile_trail",
+                "weapon_trail",
+                "aura",
+                "beam",
+                "portal",
+                "boss_ability",
+            ],
+            "element": [
+                "neutral",
+                "fire",
+                "lightning",
+                "poison",
+                "frost",
+                "arcane",
+                "shadow",
+                "holy",
+                "earth",
+                "water",
+            ],
+            "purpose": [
+                "damage",
+                "danger_warning",
+                "healing",
+                "buff",
+                "debuff",
+                "ambience",
+                "travel",
+                "cosmetic",
+            ],
+            "intensity": ["subtle", "standard", "strong", "boss"],
+        },
+        "context": {
+            "target": ["standalone", "enigma", "generic"],
+            "usage": [
+                "normal_combat",
+                "boss_combat",
+                "ground_telegraph",
+                "ambient_world",
+                "cinematic_preview",
+            ],
+        },
+        "gameplay": {
+            "shape": ["circle", "rectangle", "line", "point"],
+            "radius_tiles": "number > 0",
+            "width_tiles": "number > 0",
+            "length_tiles": "number > 0",
+            "source_height": "number > 0",
+            "target_distance": "number > 0",
+            "tell_ms": "number >= 50",
+            "active_ms": "number >= 0",
+            "duration_ms": "number >= 50",
+            "loop": "boolean",
+            "attachment": "string",
+        },
+    }
+
+
+def _recipe_templates() -> list[dict[str, Any]]:
+    templates: list[dict[str, Any]] = []
+    for recipe_id, filename in sorted(load_recipe_matrix().items()):
+        templates.append({
+            "recipe_id": recipe_id,
+            "request_file": f"examples/requests/{filename}",
+            "request": load_canonical_request(recipe_id),
+        })
+    return templates
+
+
 def capabilities(policy_id: str | None = None) -> dict[str, Any]:
     policy_ids = [policy_id] if policy_id else list_policies()
     policies = [_policy_capability(load_policy(item)) for item in policy_ids]
     recipes = [_recipe_capability(load_recipe(item)) for item in list_recipes()]
     selected = policies[0] if policy_id and policies else None
     return {
-        "capabilities_version": 1,
+        "capabilities_version": 2,
+        "request_contract": _request_contract(),
+        "runtime": runtime_capability_contract(),
+        "recipe_templates": _recipe_templates(),
         "policy": selected,
         "policies": policies,
         "recipes": recipes,

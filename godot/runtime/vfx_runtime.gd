@@ -71,6 +71,7 @@ func pause() -> void:
 func stop() -> void:
     is_playing = false
     elapsed = 0.0
+    _fired_events.clear()
     _update_runtime(elapsed)
     playback_changed.emit(false)
     time_changed.emit(elapsed, _duration())
@@ -78,6 +79,7 @@ func stop() -> void:
 
 func restart() -> void:
     elapsed = 0.0
+    _fired_events.clear()
     is_playing = true
     _update_runtime(elapsed)
     playback_changed.emit(true)
@@ -122,6 +124,7 @@ func _process(delta: float) -> void:
         if elapsed >= duration:
             if bool(document.get("loop", false)):
                 elapsed = fmod(elapsed, duration)
+                _fired_events.clear()
             else:
                 elapsed = duration
                 is_playing = false
@@ -146,11 +149,12 @@ func _emit_timeline_events(time: float) -> void:
         if not event_variant is Dictionary:
             continue
         var event: Dictionary = event_variant
-        var event_id := str(event.get("event_id", event.get("id", "")))
-        if event_id.is_empty() or _fired_events.get(event_id, false):
+        var stable_id := str(event.get("id", event.get("event_id", "")))
+        var event_id := str(event.get("event_id", stable_id))
+        if stable_id.is_empty() or _fired_events.get(stable_id, false):
             continue
         if time + 0.0001 >= float(event.get("time", 0.0)):
-            _fired_events[event_id] = true
+            _fired_events[stable_id] = true
             event_triggered.emit(event_id, time)
     for node in generated_nodes:
         if not is_instance_valid(node):
@@ -218,20 +222,23 @@ func _create_particle(layer: Dictionary, use_mesh: bool) -> GPUParticles3D:
     particles.visibility_aabb = AABB(Vector3(-20, -20, -20), Vector3(40, 40, 40))
     var process_material := ParticleProcessMaterial.new()
     var shape := str(properties.get("emission_shape", "point"))
-    var shape_code: int = int({
-        "point": 0,
-        "sphere": 1,
-        "sphere_surface": 2,
-        "box": 3,
-        "ring": 6
-    }.get(shape, 0))
-    process_material.set("emission_shape", shape_code)
-    process_material.set("emission_box_extents", _vec3(properties.get("emission_box_extents", [0.25, 0.25, 0.25])))
-    process_material.set("emission_sphere_radius", float(properties.get("emission_radius", 0.5)))
-    process_material.set("emission_ring_radius", float(properties.get("emission_radius", 0.5)))
-    process_material.set("emission_ring_height", float(properties.get("emission_height", 0.1)))
-    process_material.set("direction", _vec3(properties.get("direction", [0.0, 1.0, 0.0])))
-    process_material.set("spread", float(properties.get("spread", 35.0)))
+    var shape_mapping := _resolve_particle_emission_shape(shape, properties)
+    if int(shape_mapping.get("code", -1)) < 0:
+        runtime_warning.emit("Unsupported particle emission shape: " + shape)
+        return null
+    process_material.set("emission_shape", int(shape_mapping["code"]))
+    if shape_mapping.has("extents"):
+        process_material.set("emission_box_extents", shape_mapping["extents"])
+    else:
+        process_material.set("emission_box_extents", _vec3(properties.get("emission_box_extents", [0.25, 0.25, 0.25])))
+    process_material.set("emission_sphere_radius", float(shape_mapping.get("radius", properties.get("emission_radius", 0.5))))
+    process_material.set("emission_ring_radius", float(shape_mapping.get("radius", properties.get("emission_radius", 0.5))))
+    process_material.set("emission_ring_height", float(shape_mapping.get("height", properties.get("emission_height", 0.1))))
+    process_material.set("direction", _vec3(shape_mapping.get("direction", properties.get("direction", [0.0, 1.0, 0.0]))))
+    var spread := float(properties.get("spread", 35.0))
+    if shape_mapping.get("spread_boost", false):
+        spread = max(spread, 55.0)
+    process_material.set("spread", spread)
     process_material.set("initial_velocity_min", float(properties.get("initial_velocity_min", properties.get("initial_velocity", 1.0))))
     process_material.set("initial_velocity_max", float(properties.get("initial_velocity_max", properties.get("initial_velocity", 1.0))))
     process_material.set("gravity", _vec3(properties.get("gravity", [0.0, -2.0, 0.0])))
@@ -252,7 +259,23 @@ func _create_particle(layer: Dictionary, use_mesh: bool) -> GPUParticles3D:
     process_material.set("anim_speed_min", float(properties.get("flipbook_fps", 12.0)))
     process_material.set("anim_speed_max", float(properties.get("flipbook_fps", 12.0)))
     process_material.set("anim_loop", bool(properties.get("flipbook_loop", false)))
-    process_material.set("color_ramp", _gradient_texture(layer.get("gradient", [])))
+    var layer_curves: Variant = layer.get("curves", {})
+    if layer_curves is Dictionary:
+        var scale_curve: Variant = layer_curves.get("scale", {})
+        if scale_curve is Dictionary and scale_curve.get("points", []) is Array and not scale_curve.get("points", []).is_empty():
+            process_material.scale_curve = _curve_texture(scale_curve)
+        var alpha_curve: Variant = layer_curves.get("alpha", {})
+        if alpha_curve is Dictionary and alpha_curve.get("points", []) is Array and not alpha_curve.get("points", []).is_empty():
+            process_material.color_ramp = _alpha_curve_texture(alpha_curve)
+        else:
+            process_material.set("color_ramp", _gradient_texture(layer.get("gradient", [])))
+        var velocity_curve: Variant = layer_curves.get("velocity", {})
+        if velocity_curve is Dictionary and velocity_curve.get("points", []) is Array and not velocity_curve.get("points", []).is_empty():
+            var velocity_scale := _curve_value(velocity_curve, 0.5, 1.0)
+            process_material.set("initial_velocity_min", float(properties.get("initial_velocity_min", properties.get("initial_velocity", 1.0))) * velocity_scale)
+            process_material.set("initial_velocity_max", float(properties.get("initial_velocity_max", properties.get("initial_velocity", 1.0))) * velocity_scale)
+    else:
+        process_material.set("color_ramp", _gradient_texture(layer.get("gradient", [])))
     particles.process_material = process_material
     var particle_material := _material(layer)
     if use_mesh:
@@ -331,7 +354,12 @@ func _create_trail(layer: Dictionary) -> Node:
     var trail: Node = trail_script.new()
     trail.name = str(layer.get("id", "trail"))
     var properties := _properties(layer)
-    trail.configure(float(properties.get("width", 0.18)), float(properties.get("lifetime", 0.35)), _color(properties.get("color", "#9C8CFFFF")))
+    trail.configure(
+        float(properties.get("width", 0.18)),
+        float(properties.get("lifetime", 0.35)),
+        _color(properties.get("color", "#9C8CFFFF")),
+        clampi(int(properties.get("segments", 20)), 2, 64),
+    )
     var target_ref := str(properties.get("target", ""))
     trail.set("tracking_path", target_ref)
     trail.set("preview_motion", target_ref.is_empty())
@@ -611,6 +639,86 @@ func _asset_path(reference: String) -> String:
     if not base.ends_with("/"):
         base += "/"
     return base + reference.trim_prefix("/")
+
+
+func _resolve_particle_emission_shape(shape: String, properties: Dictionary) -> Dictionary:
+    match shape:
+        "point":
+            return {"code": 0}
+        "sphere":
+            return {"code": 1, "radius": float(properties.get("emission_radius", 0.5))}
+        "sphere_surface":
+            return {"code": 2, "radius": float(properties.get("emission_radius", 0.5))}
+        "box":
+            return {"code": 3, "extents": _vec3(properties.get("emission_box_extents", [0.25, 0.25, 0.25]))}
+        "ring":
+            return {
+                "code": 6,
+                "radius": float(properties.get("emission_radius", 0.5)),
+                "height": float(properties.get("emission_height", 0.1)),
+            }
+        "line":
+            var line_extents := _vec3(properties.get("emission_box_extents", [0.5, 0.01, 0.01]))
+            return {
+                "code": 3,
+                "extents": Vector3(maxf(line_extents.x, 0.05), 0.01, 0.01),
+            }
+        "cone":
+            return {
+                "code": 1,
+                "radius": maxf(0.05, float(properties.get("emission_radius", 0.35))),
+                "direction": _vec3(properties.get("direction", [0.0, 1.0, 0.0])),
+                "spread_boost": true,
+            }
+        "disc":
+            return {
+                "code": 6,
+                "radius": maxf(0.05, float(properties.get("emission_radius", 0.5))),
+                "height": 0.01,
+            }
+        _:
+            return {"code": -1}
+
+
+func _alpha_curve_texture(value: Variant) -> GradientTexture1D:
+    var gradient := Gradient.new()
+    if value is Dictionary:
+        var points_variant: Variant = value.get("points", [])
+        if points_variant is Array:
+            var parsed: Array[Vector2] = []
+            for point_variant in points_variant:
+                if point_variant is Dictionary:
+                    parsed.append(Vector2(float(point_variant.get("x", 0.0)), float(point_variant.get("y", 0.0))))
+            parsed.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x < b.x)
+            for point in parsed:
+                gradient.add_point(point.x, Color(1.0, 1.0, 1.0, clampf(point.y, 0.0, 1.0)))
+    if gradient.get_point_count() == 0:
+        gradient.set_color(0, Color(1, 1, 1, 1))
+        gradient.set_color(1, Color(1, 1, 1, 0))
+    var texture := GradientTexture1D.new()
+    texture.gradient = gradient
+    return texture
+
+
+func _curve_texture(value: Variant) -> CurveTexture:
+    var curve := Curve.new()
+    if value is Dictionary:
+        var points_variant: Variant = value.get("points", [])
+        if points_variant is Array:
+            var parsed: Array[Vector2] = []
+            for point_variant in points_variant:
+                if point_variant is Dictionary:
+                    parsed.append(Vector2(float(point_variant.get("x", 0.0)), float(point_variant.get("y", 0.0))))
+            parsed.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x < b.x)
+            for point in parsed:
+                curve.add_point(point)
+    if curve.get_point_count() == 0:
+        curve.add_point(Vector2(0.0, 1.0))
+        curve.add_point(Vector2(1.0, 1.0))
+    var texture := CurveTexture.new()
+    texture.width = 256
+    texture.curve = curve
+    return texture
 
 
 func _gradient_texture(value: Variant) -> GradientTexture1D:

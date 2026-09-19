@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 from typing import Any
 
 from ..version import SCHEMA_VERSION, TOOL_VERSION
@@ -11,7 +11,7 @@ from ..version import SCHEMA_VERSION, TOOL_VERSION
 RESULT_VERSION = 1
 
 
-class ForgeStatus(StrEnum):
+class ForgeStatus(str, Enum):
     READY = "ready"
     READY_CORRECTED = "ready_corrected"
     NEEDS_REVIEW = "needs_review"

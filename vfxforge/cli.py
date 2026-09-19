@@ -252,7 +252,7 @@ def _cmd_create(args: argparse.Namespace) -> dict[str, Any]:
             document["seed"] = args.seed
     else:
         document = default_document(effect_id, args.name, args.duration or 1.0, args.loop, args.seed if args.seed is not None else 12345)
-    validation, _ = _commit(path, document)
+    validation, _ = _commit(path, document, args.unsafe_direct_edit)
     result = _envelope("create")
     result["warnings"] = validation["warnings"]
     result["errors"] = validation["errors"]
