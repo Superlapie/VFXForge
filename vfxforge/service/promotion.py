@@ -1,4 +1,4 @@
-"""Job workspaces, locks, and atomic promotion."""
+"""Job workspaces, locks, and transactional promotion."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ..resources import install_root
 from ..version import SCHEMA_VERSION, TOOL_VERSION
 from .paths import assert_safe_id
 
@@ -24,6 +25,47 @@ def request_hash(normalized_request: dict[str, Any]) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _dependency_asset_hashes(recipe: dict[str, Any]) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    document = recipe.get("document", {})
+    if not isinstance(document, dict):
+        return hashes
+    root = install_root()
+    candidates: list[Path] = []
+    dependencies = document.get("dependencies", {})
+    if isinstance(dependencies, dict):
+        for key in ("textures", "meshes", "effects"):
+            for reference in dependencies.get(key, []):
+                if isinstance(reference, str) and reference:
+                    candidates.append(root / reference)
+                    candidates.append(root / "examples" / reference.removeprefix("examples/"))
+    for layer in document.get("layers", []):
+        if not isinstance(layer, dict):
+            continue
+        for container in (layer.get("properties", {}), layer.get("material", {})):
+            if isinstance(container, dict):
+                texture = container.get("texture")
+                if isinstance(texture, str) and texture:
+                    candidates.append(root / texture)
+                    candidates.append(root / "examples" / texture.removeprefix("examples/"))
+        properties = layer.get("properties", {})
+        if isinstance(properties, dict):
+            mesh = properties.get("mesh_asset")
+            if isinstance(mesh, str) and mesh:
+                candidates.append(root / mesh)
+                candidates.append(root / "examples" / mesh.removeprefix("examples/"))
+    seen: set[str] = set()
+    for path in candidates:
+        resolved = path.resolve()
+        key = str(resolved)
+        if key in seen or not resolved.is_file():
+            continue
+        seen.add(key)
+        relative = resolved.relative_to(root.resolve()) if str(resolved).startswith(str(root.resolve())) else resolved.name
+        hashes[str(relative).replace("\\", "/")] = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    return dict(sorted(hashes.items()))
+
+
 def generation_digest(
     normalized_request: dict[str, Any],
     recipe: dict[str, Any],
@@ -32,6 +74,7 @@ def generation_digest(
     tool_version: str = TOOL_VERSION,
     schema_version: int = SCHEMA_VERSION,
 ) -> str:
+    asset_hashes = _dependency_asset_hashes(recipe)
     payload = {
         "request_hash": request_hash(normalized_request),
         "recipe_id": recipe.get("recipe_id"),
@@ -40,6 +83,7 @@ def generation_digest(
         "policy_id": policy.get("policy_id"),
         "policy_version": policy.get("policy_version", 1),
         "policy_sha256": hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+        "asset_hashes": asset_hashes,
         "tool_version": tool_version,
         "schema_version": schema_version,
     }
@@ -122,27 +166,39 @@ def promote_candidate(candidate_dir: Path, production_dir: Path, metadata: dict[
     import shutil
 
     lock = acquire_promotion_lock(production_dir.parent, str(metadata.get("job_id", "promote")))
+    staging = production_dir.with_name(production_dir.name + ".staging")
+    backup = production_dir.with_name(production_dir.name + ".bak")
+    promoted = False
     try:
         conflict = check_promotion_conflict(production_dir, str(metadata.get("generation_digest", "")), bool(metadata.get("allow_replace", False)))
         if conflict:
             raise RuntimeError(conflict["message"])
-        staging = production_dir.with_name(production_dir.name + ".staging")
         if staging.exists():
             shutil.rmtree(staging)
         shutil.copytree(candidate_dir, staging)
         if manifest_path is not None and manifest_path.exists():
             shutil.copy2(manifest_path, staging / FORGE_MANIFEST)
         mark_managed(staging, metadata)
-        if production_dir.exists():
-            backup = production_dir.with_name(production_dir.name + ".bak")
+        had_production = production_dir.exists()
+        if had_production:
             if backup.exists():
                 shutil.rmtree(backup)
             production_dir.rename(backup)
-        staging.rename(production_dir)
+        try:
+            staging.rename(production_dir)
+            promoted = True
+        except Exception:
+            if had_production and backup.exists() and not production_dir.exists():
+                backup.rename(production_dir)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
         return production_dir
     except Exception:
-        if production_dir.with_name(production_dir.name + ".staging").exists():
-            shutil.rmtree(production_dir.with_name(production_dir.name + ".staging"), ignore_errors=True)
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        if not promoted and backup.exists() and not production_dir.exists():
+            backup.rename(production_dir)
         raise
     finally:
         release_promotion_lock(lock)

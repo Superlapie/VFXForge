@@ -14,6 +14,7 @@ from typing import Any
 
 from .errors import ExportError
 from .model import read_document
+from .resources import godot_runtime_dir
 from .service.paths import validate_resource_path
 from .validation import validate_document
 from .version import GODOT_TARGET, TOOL_VERSION
@@ -312,8 +313,8 @@ def _run_host_library_smoke(output: Path, resource_root: str, shared_runtime_pat
         bundle_target = host / resource_root.removeprefix("res://")
         bundle_target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(output, bundle_target)
-        runtime_source = Path(__file__).resolve().parents[1] / "godot" / "runtime" / "vfx_runtime.gd"
-        trail_source = Path(__file__).resolve().parents[1] / "godot" / "runtime" / "vfx_trail.gd"
+        runtime_source = godot_runtime_dir() / "vfx_runtime.gd"
+        trail_source = godot_runtime_dir() / "vfx_trail.gd"
         if shared_runtime_path:
             shared_dir = host / shared_runtime_path.removeprefix("res://").rsplit("/", 1)[0]
             shared_dir.mkdir(parents=True, exist_ok=True)
@@ -326,33 +327,41 @@ def _run_host_library_smoke(output: Path, resource_root: str, shared_runtime_pat
                 f'trail_script_path: String = "{shared_runtime_path.rsplit("/", 1)[0]}/vfx_trail.gd"',
             )
             runtime_dst.write_text(runtime_text, encoding="utf-8")
-        smoke_script = host / "host_smoke.gd"
-        smoke_script.write_text(
-            f'''extends SceneTree
-
-func _initialize() -> void:
-    var scene := load("{resource_root}/effect.tscn")
-    if scene == null:
-        push_error("HOST_LIBRARY_SMOKE missing scene")
-        quit(2)
-        return
-    var instance := (scene as PackedScene).instantiate()
-    if instance == null:
-        push_error("HOST_LIBRARY_SMOKE instantiate failed")
-        quit(3)
-        return
-    root.add_child(instance)
-    print("PASS host library smoke")
-    quit(0)
-''',
-            encoding="utf-8",
-        )
+        smoke_config = {
+            "resource_root": resource_root,
+            "frame_count": 30,
+            "enabled_layers": [
+                str(layer.get("id"))
+                for layer in json.loads((output / "document.vfx.json").read_text(encoding="utf-8")).get("layers", [])
+                if isinstance(layer, dict) and layer.get("enabled", True) and layer.get("type") in {
+                    "particle", "mesh_particle", "sprite", "light", "trail", "beam", "decal", "mesh_effect", "child_effect"
+                }
+            ],
+        }
+        (host / "smoke_config.json").write_text(json.dumps(smoke_config, indent=2) + "\n", encoding="utf-8")
+        shutil.copy2(fixture_root / "host_smoke.gd", host / "host_smoke.gd")
         try:
+            import_result = subprocess.run(
+                [command, "--headless", "--editor", "--path", str(host), "--quit"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            import_output = f"{import_result.stdout}\n{import_result.stderr}"
+            if import_result.returncode != 0 or "ERROR:" in import_output or "Parse Error" in import_output:
+                return {
+                    "status": "failed",
+                    "phase": "host_import",
+                    "returncode": import_result.returncode,
+                    "stdout": import_result.stdout[-2000:],
+                    "stderr": import_result.stderr[-2000:],
+                }
             result = subprocess.run(
                 [command, "--headless", "--path", str(host), "--script", "res://host_smoke.gd"],
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=90,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -460,10 +469,10 @@ def export_document(
         target.write_text(json.dumps(rewritten_child, indent=2) + "\n", encoding="utf-8")
     exported_document = _replace_refs(exported_document, effect_replacements)
 
-    runtime_source = Path(__file__).resolve().parents[1] / "godot" / "runtime" / "vfx_runtime.gd"
-    trail_source = Path(__file__).resolve().parents[1] / "godot" / "runtime" / "vfx_trail.gd"
+    runtime_source = godot_runtime_dir() / "vfx_runtime.gd"
+    trail_source = godot_runtime_dir() / "vfx_trail.gd"
     if not runtime_source.exists():
-        raise ExportError("The Godot runtime source is missing from the repository.", "RUNTIME_SOURCE_MISSING", str(runtime_source))
+        raise ExportError("The Godot runtime source is missing from the installed VFX Forge data.", "RUNTIME_SOURCE_MISSING", str(runtime_source))
     if not trail_source.exists():
         raise ExportError("The Godot trail runtime source is missing from the repository.", "TRAIL_SOURCE_MISSING", str(trail_source))
     if mode not in {"standalone", "library"}:

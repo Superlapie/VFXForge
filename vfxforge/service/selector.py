@@ -7,10 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..resources import recipes_dir
 from .request import request_lookup_path
 
 
-RECIPE_ROOT = Path(__file__).resolve().parents[2] / "recipes"
+RECIPE_ROOT = recipes_dir()
 
 
 def _sha256_payload(data: dict[str, Any]) -> str:

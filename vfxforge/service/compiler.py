@@ -7,6 +7,7 @@ from typing import Any
 
 from .policy import allowed_budget_profile, world_units_per_tile
 from .request import request_lookup_path
+from .semantic import layer_semantic_roles
 
 
 def _set_path(document: dict[str, Any], dotted: str, value: Any) -> None:
@@ -104,10 +105,20 @@ def _apply_tell_timing(document: dict[str, Any], request: dict[str, Any], recipe
     document["duration"] = tell_sec + post_resolve
     resolve_event_id = str(timing.get("resolve_event_id", "damage_frame"))
     warning_end = tell_sec
+    roles = layer_semantic_roles(recipe)
+    resolve_visual_ids = {layer_id for layer_id, role in roles.items() if role == "resolve_visual"}
+    resolve_visual_ids.update(str(item) for item in timing.get("resolve_layer_ids", []) if isinstance(item, str))
+    resolve_event_ids = {layer_id for layer_id, role in roles.items() if role == "resolve_event"}
     for layer in document.get("layers", []):
         if not isinstance(layer, dict):
             continue
-        if layer.get("type") == "event_marker":
+        layer_id = str(layer.get("id", ""))
+        if layer_id in resolve_visual_ids:
+            layer["enabled"] = True
+            layer["start"] = tell_sec
+            layer["duration"] = max(0.001, post_resolve if post_resolve > 0 else document["duration"] - tell_sec)
+            continue
+        if layer.get("type") == "event_marker" or layer_id in resolve_event_ids:
             continue
         start = float(layer.get("start", 0.0))
         if start >= warning_end:
@@ -130,7 +141,7 @@ def _apply_tell_timing(document: dict[str, Any], request: dict[str, Any], recipe
             continue
         properties = layer.setdefault("properties", {})
         marker_id = str(properties.get("event_id", layer.get("id", "resolve")))
-        if marker_id in {resolve_event_id, "damage_frame", "resolve", "impact"}:
+        if marker_id in {resolve_event_id, "damage_frame", "resolve", "impact"} or str(layer.get("id", "")) in resolve_event_ids:
             layer["start"] = tell_sec
             layer["duration"] = 0.001
     if "loop" in gameplay:

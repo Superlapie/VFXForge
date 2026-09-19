@@ -289,5 +289,25 @@
     "standard": 1.0,
     "strong": 1.25,
     "boss": 1.5
-  }
+  },
+  "supported_gameplay": [
+    "gameplay.attachment"
+  ],
+  "consumed_gameplay": [
+    "gameplay.attachment"
+  ],
+  "bindings": [
+    {
+      "from": "gameplay.attachment",
+      "to": "layers.blade_trail.properties.target"
+    }
+  ],
+  "layer_roles": [
+    {
+      "id": "blade_trail",
+      "required": true,
+      "correction_priority": 5,
+      "semantic_role": "gameplay_footprint"
+    }
+  ]
 }

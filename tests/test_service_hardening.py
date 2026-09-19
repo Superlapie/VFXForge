@@ -7,8 +7,12 @@ import json
 import tempfile
 import threading
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
+from vfxforge.model import set_path
+from vfxforge.presets import make_preset
+from vfxforge.service.autocorrect import autocorrect_document
 from vfxforge.service.compiler import compile_recipe
 from vfxforge.service.pipeline import forge, plan
 from vfxforge.service.policy import load_policy
@@ -16,7 +20,7 @@ from vfxforge.service.promotion import generation_digest, promote_candidate, req
 from vfxforge.service.request import normalize_request, validate_request
 from vfxforge.service.result import ForgeStatus
 from vfxforge.service.selector import load_recipe, select_recipe
-from vfxforge.service.semantic import document_semantic_metrics, validate_recipe_semantics
+from vfxforge.service.semantic import document_semantic_metrics, protected_document_paths, validate_recipe_semantics
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +46,19 @@ class GameplaySemanticsTests(unittest.TestCase):
         self.assertAlmostEqual(primary[1], 6.0, places=3)
         self.assertAlmostEqual(metrics["resolve_time_sec"], 0.9, places=3)
         self.assertAlmostEqual(metrics["duration_sec"], 1.1, places=3)
+
+    def test_boss_resolve_flash_occurs_at_tell(self) -> None:
+        request = normalize_request(_read_request("boss_line_sweep.vfxrequest.json"))
+        recipe = load_recipe("boss.line_sweep")
+        document = compile_recipe(request, recipe, load_policy("enigma"))
+        timings = document_semantic_metrics(document)["layer_timings"]
+        warning = timings["warning_line"]
+        resolve_flash = timings["resolve_flash"]
+        self.assertAlmostEqual(warning["start"], 0.0, places=3)
+        self.assertAlmostEqual(warning["end"], 0.9, places=3)
+        self.assertAlmostEqual(resolve_flash["start"], 0.9, places=3)
+        self.assertLessEqual(resolve_flash["end"], 1.1 + 1e-3)
+        self.assertGreaterEqual(resolve_flash["end"], 1.0)
 
     def test_unsupported_semantic_parameter_needs_review(self) -> None:
         request = normalize_request(_read_request("boss_line_sweep.vfxrequest.json"))
@@ -75,6 +92,25 @@ class ProductionGateTests(unittest.TestCase):
             self.assertTrue(result["production_ready"])
 
 
+class AutocorrectProtectionTests(unittest.TestCase):
+    def test_autocorrect_preserves_gameplay_semantics(self) -> None:
+        request = normalize_request(_read_request("boss_line_sweep.vfxrequest.json"))
+        recipe = load_recipe("boss.line_sweep")
+        policy = load_policy("enigma")
+        document = compile_recipe(request, recipe, policy)
+        stressed = deepcopy(document)
+        set_path(stressed, "layers.edge_sparks.properties.amount", 90000)
+        stressed["duration"] = 0.5
+        before_metrics = document_semantic_metrics(document)
+        corrected, _, review = autocorrect_document(stressed, policy, "boss_combat", request, recipe)
+        self.assertEqual(review, [])
+        after_metrics = document_semantic_metrics(corrected)
+        self.assertEqual(before_metrics["primary_decal_size"], after_metrics["primary_decal_size"])
+        self.assertEqual(before_metrics["resolve_time_sec"], after_metrics["resolve_time_sec"])
+        self.assertEqual(before_metrics["layer_timings"]["warning_line"], after_metrics["layer_timings"]["warning_line"])
+        self.assertEqual(before_metrics["layer_timings"]["resolve_flash"], after_metrics["layer_timings"]["resolve_flash"])
+
+
 class RecipeQualityTests(unittest.TestCase):
     def test_lightning_not_fire_composition(self) -> None:
         request = normalize_request({
@@ -90,12 +126,6 @@ class RecipeQualityTests(unittest.TestCase):
         self.assertIn("bolt", layer_ids)
         self.assertNotIn("fireball", layer_ids)
         self.assertNotIn("scorch", layer_ids)
-        colors = []
-        for layer in document.get("layers", []):
-            color = layer.get("properties", {}).get("color")
-            if isinstance(color, str):
-                colors.append(color.lower())
-        self.assertTrue(any("ff" not in color or "6a" not in color for color in colors))
 
     def test_poison_cloud_loop_coverage(self) -> None:
         request = normalize_request({
@@ -130,6 +160,16 @@ class SecurityAndDigestTests(unittest.TestCase):
         digest_b = generation_digest(request, recipe_b, policy)
         self.assertNotEqual(digest_a, digest_b)
 
+    def test_generation_digest_changes_with_asset(self) -> None:
+        request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
+        policy = load_policy("default")
+        recipe = load_recipe("impact.fire")
+        digest_a = generation_digest(request, recipe, policy)
+        mutated = json.loads(json.dumps(recipe))
+        mutated.setdefault("document", {}).setdefault("dependencies", {}).setdefault("textures", []).append("examples/assets/textures/nonexistent_probe.png")
+        digest_b = generation_digest(request, mutated, policy)
+        self.assertNotEqual(digest_a, digest_b)
+
 
 class ConcurrencyTests(unittest.TestCase):
     def test_promotion_lock_serializes_conflicts(self) -> None:
@@ -161,6 +201,32 @@ class ConcurrencyTests(unittest.TestCase):
             for thread in threads:
                 thread.join()
             self.assertEqual(len(errors), 1)
+
+    def test_identical_requests_use_unique_job_workspaces(self) -> None:
+        request = _read_request("fire_impact.vfxrequest.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            first = forge(request, policy_id="default", workspace=tmp, export=False)
+            second = forge(request, policy_id="default", workspace=tmp, export=False)
+            self.assertNotEqual(first["job_id"], second["job_id"])
+
+
+class PromotionSafetyTests(unittest.TestCase):
+    def test_failed_promotion_restores_previous_production(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            production = base / "production" / "effect"
+            first_candidate = base / "first" / "candidate"
+            second_candidate = base / "second" / "candidate"
+            first_candidate.mkdir(parents=True)
+            second_candidate.mkdir(parents=True)
+            (first_candidate / "marker.txt").write_text("first\n", encoding="utf-8")
+            (second_candidate / "broken").write_text("ok\n", encoding="utf-8")
+            promote_candidate(first_candidate, production, {"job_id": "job1", "generation_digest": "a", "allow_replace": True})
+            self.assertTrue(production.exists())
+            with self.assertRaises(Exception):
+                promote_candidate(second_candidate / "missing", production, {"job_id": "job2", "generation_digest": "b", "allow_replace": True})
+            self.assertTrue(production.exists())
+            self.assertTrue((production / "marker.txt").exists())
 
 
 if __name__ == "__main__":

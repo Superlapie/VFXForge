@@ -7,7 +7,7 @@ from typing import Any
 
 from ..validation import estimate_metrics
 from .policy import policy_ceilings
-from .request import gameplay_critical_paths
+from .semantic import is_document_path_protected, protected_document_paths
 
 
 MAX_CORRECTION_PASSES = 4
@@ -117,7 +117,7 @@ def _trim_layer_duration(document: dict[str, Any], protected_paths: set[str]) ->
         if not isinstance(layer, dict):
             continue
         layer_path = f"layers.{layer.get('id')}.duration"
-        if layer_path in protected_paths:
+        if is_document_path_protected(layer_path, protected_paths):
             continue
         start = float(layer.get("start", 0.0))
         layer_duration = float(layer.get("duration", 0.0))
@@ -137,6 +137,19 @@ def _trim_layer_duration(document: dict[str, Any], protected_paths: set[str]) ->
     return entries
 
 
+def _disable_optional_layer(document: dict[str, Any], roles: dict[str, dict[str, Any]], protected_paths: set[str]) -> dict[str, Any] | None:
+    optional = [
+        layer for layer in document.get("layers", [])
+        if isinstance(layer, dict)
+        and layer.get("enabled", True)
+        and layer.get("type") in {"particle", "sprite"}
+        and not _is_required_layer(str(layer.get("id", "")), roles)
+        and not is_document_path_protected(f"layers.{layer.get('id')}.enabled", protected_paths)
+    ]
+    optional.sort(key=lambda item: _correction_priority(str(item.get("id", "")), roles), reverse=True)
+    return optional[0] if optional else None
+
+
 def autocorrect_document(
     document: dict[str, Any],
     policy: dict[str, Any],
@@ -151,7 +164,7 @@ def autocorrect_document(
     ledger: list[dict[str, Any]] = []
     review: list[dict[str, Any]] = []
     roles = _layer_roles(recipe)
-    protected_paths = gameplay_critical_paths(request or {})
+    protected_paths = protected_document_paths(recipe, corrected)
     for _ in range(MAX_CORRECTION_PASSES):
         pass_entries: list[dict[str, Any]] = []
         pass_entries.extend(_reduce_particles(corrected, ceilings["max_particles"], roles))
@@ -159,16 +172,8 @@ def autocorrect_document(
         pass_entries.extend(_trim_layer_duration(corrected, protected_paths))
         metrics = estimate_metrics(corrected)
         if metrics["draw_calls_estimate"] > ceilings["max_draw_calls"]:
-            optional = [
-                layer for layer in corrected.get("layers", [])
-                if isinstance(layer, dict)
-                and layer.get("enabled", True)
-                and layer.get("type") in {"particle", "sprite"}
-                and not _is_required_layer(str(layer.get("id", "")), roles)
-            ]
-            optional.sort(key=lambda item: _correction_priority(str(item.get("id", "")), roles), reverse=True)
-            if optional:
-                layer = optional[0]
+            layer = _disable_optional_layer(corrected, roles, protected_paths)
+            if layer is not None:
                 before = layer.get("enabled", True)
                 layer["enabled"] = False
                 pass_entries.append(_ledger_entry(

@@ -7,10 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..resources import policies_dir
 from .paths import resolve_contained_file
 
 
-POLICY_ROOT = Path(__file__).resolve().parents[2] / "policies"
+POLICY_ROOT = policies_dir()
 
 
 def _sha256_payload(data: dict[str, Any]) -> str:

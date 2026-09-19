@@ -11,10 +11,10 @@
   "seed": 55310,
   "document": {
     "schema_version": 1,
-    "name": "Ground Warning Circle",
-    "duration": 2.2,
+    "name": "Boss 2x2 Eruption",
+    "duration": 1.35,
     "loop": false,
-    "seed": 55310,
+    "seed": 55312,
     "metadata": {
       "author": "",
       "description": "",
@@ -22,23 +22,25 @@
       "notes": ""
     },
     "tags": [
-      "telegraph",
-      "ground",
-      "warning"
+      "boss",
+      "eruption",
+      "rectangle"
     ],
     "layers": [
       {
-        "name": "Warning Circle",
+        "id": "warning_rect",
+        "type": "decal",
+        "name": "Warning Rectangle",
         "enabled": true,
         "start": 0.0,
-        "duration": 2.2,
+        "duration": 1.1,
         "properties": {
           "texture": "",
           "size": [
-            3.5,
-            3.5
+            3.0,
+            3.0
           ],
-          "color": "#FF465C78",
+          "color": "#FF7040AA",
           "height": 0.02,
           "fade": true,
           "rotate": 0.0
@@ -87,155 +89,17 @@
             "position": 1.0,
             "color": "#00000000"
           }
-        ],
-        "id": "warning_circle",
-        "type": "decal"
+        ]
       },
       {
-        "name": "Dust",
+        "id": "resolve_marker",
+        "type": "event_marker",
+        "name": "Resolve",
         "enabled": true,
-        "start": 0.0,
-        "duration": 2.2,
+        "start": 1.1,
+        "duration": 0.001,
         "properties": {
-          "amount": 20,
-          "one_shot": false,
-          "lifetime": 1.2,
-          "explosiveness": 0.8,
-          "randomness": 0.15,
-          "fixed_fps": 0,
-          "local_coords": false,
-          "emission_shape": "ring",
-          "emission_box_extents": [
-            0.25,
-            0.25,
-            0.25
-          ],
-          "emission_radius": 1.6,
-          "emission_height": 0.1,
-          "direction": [
-            0.0,
-            1.0,
-            0.0
-          ],
-          "spread": 35.0,
-          "initial_velocity_min": 0.05,
-          "initial_velocity_max": 0.2,
-          "gravity": [
-            0.0,
-            0.1,
-            0.0
-          ],
-          "damping": 0.0,
-          "radial_accel": 0.0,
-          "tangential_accel": 0.0,
-          "turbulence": 0.0,
-          "attractor_strength": 0.0,
-          "attractor_position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "scale_min": 0.08,
-          "scale_max": 0.16,
-          "rotation_min": 0.0,
-          "rotation_max": 360.0,
-          "angular_velocity_min": -90.0,
-          "angular_velocity_max": 90.0,
-          "texture": "",
-          "color": "#FFB07780"
-        },
-        "material": {
-          "blend_mode": "additive",
-          "unshaded": true,
-          "billboard": "enabled",
-          "depth_draw": "always",
-          "texture": "",
-          "tint": "#FFFFFFFF",
-          "uv_scroll": [
-            0.0,
-            0.0
-          ],
-          "distortion": 0.0,
-          "dissolve": 0.0,
-          "fresnel": 0.0,
-          "emissive_intensity": 1.0
-        },
-        "curves": {
-          "scale": {
-            "interpolation": "linear",
-            "points": [
-              {
-                "x": 0.0,
-                "y": 0.35
-              },
-              {
-                "x": 0.15,
-                "y": 1.0
-              },
-              {
-                "x": 1.0,
-                "y": 0.0
-              }
-            ]
-          },
-          "alpha": {
-            "interpolation": "linear",
-            "points": [
-              {
-                "x": 0.0,
-                "y": 0.0
-              },
-              {
-                "x": 0.1,
-                "y": 1.0
-              },
-              {
-                "x": 0.75,
-                "y": 1.0
-              },
-              {
-                "x": 1.0,
-                "y": 0.0
-              }
-            ]
-          },
-          "velocity": {
-            "interpolation": "linear",
-            "points": [
-              {
-                "x": 0.0,
-                "y": 1.0
-              },
-              {
-                "x": 1.0,
-                "y": 0.2
-              }
-            ]
-          }
-        },
-        "gradient": [
-          {
-            "position": 0.0,
-            "color": "#FFFFFFFF"
-          },
-          {
-            "position": 1.0,
-            "color": "#00000000"
-          }
-        ],
-        "id": "dust",
-        "type": "particle"
-      },
-      {
-        "name": "Damage Frame",
-        "enabled": true,
-        "start": 1.8,
-        "duration": 0.05,
-        "properties": {
-          "event_id": "damage_frame",
-          "payload": {
-            "severity": "warning"
-          }
+          "event_id": "damage_frame"
         },
         "material": {
           "blend_mode": "additive",
@@ -263,9 +127,108 @@
             "position": 1.0,
             "color": "#00000000"
           }
-        ],
-        "id": "damage_frame",
-        "type": "event_marker"
+        ]
+      },
+      {
+        "id": "eruption_burst",
+        "type": "particle",
+        "name": "Eruption Burst",
+        "enabled": true,
+        "start": 1.1,
+        "duration": 0.25,
+        "properties": {
+          "amount": 96,
+          "one_shot": true,
+          "lifetime": 0.35,
+          "explosiveness": 0.9,
+          "randomness": 0.2,
+          "fixed_fps": 0,
+          "local_coords": false,
+          "emission_shape": "box",
+          "emission_box_extents": [
+            1.5,
+            0.5,
+            1.5
+          ],
+          "emission_radius": 1.0,
+          "emission_height": 0.1,
+          "direction": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "spread": 55.0,
+          "initial_velocity_min": 1.0,
+          "initial_velocity_max": 3.0,
+          "gravity": [
+            0.0,
+            -2.0,
+            0.0
+          ],
+          "damping": 0.0,
+          "radial_accel": 0.0,
+          "tangential_accel": 0.0,
+          "turbulence": 0.0,
+          "attractor_strength": 0.0,
+          "attractor_position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale_min": 0.08,
+          "scale_max": 0.18,
+          "rotation_min": 0.0,
+          "rotation_max": 360.0,
+          "angular_velocity_min": -90.0,
+          "angular_velocity_max": 90.0,
+          "texture": "",
+          "color": "#FF8844FF"
+        },
+        "material": {
+          "blend_mode": "additive",
+          "unshaded": true,
+          "billboard": "enabled",
+          "depth_draw": "always",
+          "texture": "",
+          "tint": "#FFFFFFFF",
+          "uv_scroll": [
+            0.0,
+            0.0
+          ],
+          "distortion": 0.0,
+          "dissolve": 0.0,
+          "fresnel": 0.0,
+          "emissive_intensity": 1.0
+        },
+        "curves": {
+          "alpha": {
+            "interpolation": "linear",
+            "points": [
+              {
+                "x": 0.0,
+                "y": 0.0
+              },
+              {
+                "x": 0.1,
+                "y": 1.0
+              },
+              {
+                "x": 1.0,
+                "y": 0.0
+              }
+            ]
+          }
+        },
+        "gradient": [
+          {
+            "position": 0.0,
+            "color": "#FFFFFFFF"
+          },
+          {
+            "position": 1.0,
+            "color": "#00000000"
+          }
+        ]
       }
     ],
     "dependencies": {
@@ -274,7 +237,16 @@
       "effects": []
     },
     "timeline": {
-      "events": [],
+      "events": [
+        {
+          "id": "damage_frame",
+          "event_id": "damage_frame",
+          "time": 1.1,
+          "data": {
+            "presentation": true
+          }
+        }
+      ],
       "snap": 0.05
     },
     "camera_presets": {
@@ -324,7 +296,7 @@
     },
     "export": {
       "godot_version": "4.x",
-      "folder_name": "ground_warning_circle",
+      "folder_name": "effect",
       "include_metadata": true,
       "embed_document": true,
       "copy_textures": true,
@@ -338,8 +310,59 @@
     "boss": 1.5
   },
   "gameplay_scaling": {
-    "circle_size_layers": [
-      "warning_circle"
+    "rectangle_size_layers": [
+      "warning_rect"
+    ],
+    "remove_layers_for_shape": {
+      "rectangle": [
+        "warning_circle",
+        "warning_line"
+      ]
+    }
+  },
+  "required_gameplay": [
+    "gameplay.shape",
+    "gameplay.width_tiles",
+    "gameplay.length_tiles",
+    "gameplay.tell_ms"
+  ],
+  "supported_gameplay": [
+    "gameplay.shape",
+    "gameplay.width_tiles",
+    "gameplay.length_tiles",
+    "gameplay.tell_ms"
+  ],
+  "consumed_gameplay": [
+    "gameplay.shape",
+    "gameplay.width_tiles",
+    "gameplay.length_tiles",
+    "gameplay.tell_ms"
+  ],
+  "timing": {
+    "post_resolve_sec": 0.25,
+    "resolve_event_id": "damage_frame",
+    "resolve_layer_ids": [
+      "eruption_burst"
     ]
-  }
+  },
+  "layer_roles": [
+    {
+      "id": "warning_rect",
+      "required": true,
+      "correction_priority": 5,
+      "semantic_role": "warning_geometry"
+    },
+    {
+      "id": "resolve_marker",
+      "required": true,
+      "correction_priority": 1,
+      "semantic_role": "resolve_event"
+    },
+    {
+      "id": "eruption_burst",
+      "required": true,
+      "correction_priority": 10,
+      "semantic_role": "resolve_visual"
+    }
+  ]
 }

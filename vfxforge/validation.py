@@ -144,6 +144,9 @@ def _check_texture_ref(
     path: str,
     project_dir: Path | None,
     errors: list[dict[str, Any]],
+    *,
+    max_dimension: int | None = None,
+    require_inspectable: bool = False,
 ) -> None:
     if not reference:
         return
@@ -168,6 +171,36 @@ def _check_texture_ref(
                 f"Referenced texture does not exist: {reference}",
                 "Import the texture with vfxforge add-texture or correct the relative path.",
                 reference,
+            )
+        )
+        return
+    if max_dimension is None:
+        return
+    try:
+        from PIL import Image
+
+        with Image.open(resolved) as image:
+            width, height = image.size
+    except Exception:
+        if require_inspectable:
+            errors.append(
+                issue(
+                    "error",
+                    "TEXTURE_DIMENSION_UNVERIFIED",
+                    path,
+                    "Texture dimensions could not be inspected for policy enforcement.",
+                    value=reference,
+                )
+            )
+        return
+    if max(width, height) > max_dimension:
+        errors.append(
+            issue(
+                "error",
+                "TEXTURE_DIMENSION_EXCEEDED",
+                path,
+                f"Texture dimensions {width}x{height} exceed policy maximum {max_dimension}.",
+                value=reference,
             )
         )
 
@@ -300,6 +333,32 @@ def detect_dependency_cycles(document: dict[str, Any], project_dir: Path | None)
 
     visit(document, None)
     return cycles
+
+
+def _max_child_effect_depth(document: dict[str, Any], project_dir: Path | None, current_depth: int = 0, stack: list[str] | None = None) -> int:
+    if project_dir is None:
+        return current_depth
+    stack = list(stack or [str(document.get("id", "<missing>"))])
+    maximum = current_depth
+    current_dir = project_dir
+    for layer in document.get("layers", []):
+        if not isinstance(layer, dict):
+            continue
+        reference = _effect_reference(layer)
+        if not reference:
+            continue
+        child_path = _resolve_effect(reference, current_dir)
+        if child_path is None:
+            continue
+        try:
+            child = read_document(child_path)
+        except Exception:
+            continue
+        child_id = str(child.get("id", reference))
+        if child_id in stack:
+            continue
+        maximum = max(maximum, _max_child_effect_depth(child, child_path.parent, current_depth + 1, stack + [child_id]))
+    return maximum
 
 
 def estimate_metrics(document: dict[str, Any], project_dir: Path | None = None) -> dict[str, Any]:
@@ -603,13 +662,64 @@ def validate_document(
                 continue
             properties = layer.get("properties", {})
             if layer.get("type") == "trail" and isinstance(properties, dict):
-                segments = properties.get("segment_count")
+                segments = properties.get("segments", properties.get("segment_count"))
                 if finite_number(segments) and float(segments) > profile["max_trail_segments"]:
-                    errors.append(issue("error", "TRAIL_SEGMENT_LIMIT", f"layers[{index}].properties.segment_count", f"Trail segments exceed policy limit ({profile['max_trail_segments']}).", value=segments))
+                    errors.append(issue("error", "TRAIL_SEGMENT_LIMIT", f"layers[{index}].properties.segments", f"Trail segments exceed policy limit ({profile['max_trail_segments']}).", value=segments))
             if layer.get("type") == "beam" and isinstance(properties, dict):
-                segments = properties.get("segment_count")
+                segments = properties.get("segments", properties.get("segment_count"))
                 if finite_number(segments) and float(segments) > profile["max_beam_segments"]:
-                    errors.append(issue("error", "BEAM_SEGMENT_LIMIT", f"layers[{index}].properties.segment_count", f"Beam segments exceed policy limit ({profile['max_beam_segments']}).", value=segments))
+                    errors.append(issue("error", "BEAM_SEGMENT_LIMIT", f"layers[{index}].properties.segments", f"Beam segments exceed policy limit ({profile['max_beam_segments']}).", value=segments))
+        max_texture_dimension = int(profile.get("max_texture_dimension", 0) or 0)
+        if max_texture_dimension > 0:
+            texture_paths: set[str] = set()
+            for index, layer in enumerate(layers):
+                if not isinstance(layer, dict):
+                    continue
+                path = f"layers[{index}]"
+                material = layer.get("material", {})
+                properties = layer.get("properties", {})
+                if isinstance(material, dict) and material.get("texture"):
+                    texture_paths.add(f"{path}.material.texture")
+                    _check_texture_ref(
+                        material.get("texture"),
+                        f"{path}.material.texture",
+                        project,
+                        errors,
+                        max_dimension=max_texture_dimension,
+                        require_inspectable=True,
+                    )
+                if isinstance(properties, dict) and properties.get("texture"):
+                    _check_texture_ref(
+                        properties.get("texture"),
+                        f"{path}.properties.texture",
+                        project,
+                        errors,
+                        max_dimension=max_texture_dimension,
+                        require_inspectable=True,
+                    )
+            if isinstance(dependencies, dict):
+                for index, reference in enumerate(dependencies.get("textures", [])):
+                    _check_texture_ref(
+                        reference,
+                        f"dependencies.textures[{index}]",
+                        project,
+                        errors,
+                        max_dimension=max_texture_dimension,
+                        require_inspectable=bool(reference),
+                    )
+        max_child_depth = int(profile.get("max_child_effect_depth", 0) or 0)
+        if max_child_depth > 0 and project is not None:
+            depth = _max_child_effect_depth(root, project)
+            if depth > max_child_depth:
+                errors.append(
+                    issue(
+                        "error",
+                        "CHILD_EFFECT_DEPTH_EXCEEDED",
+                        "dependencies.effects",
+                        f"Child-effect dependency depth ({depth}) exceeds policy maximum ({max_child_depth}).",
+                        value=depth,
+                    )
+                )
     if metrics["overdraw_layers"] >= 6:
         warnings.append(issue("warning", "OVERDRAW_RISK", "layers", f"{metrics['overdraw_layers']} transparent/additive layers may create heavy overdraw.", "Preview on target hardware and consolidate cards where possible."))
     if duration > 30.0:

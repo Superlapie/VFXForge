@@ -9,6 +9,7 @@ from typing import Any
 
 from ..version import SCHEMA_VERSION, TOOL_VERSION
 from .policy import policy_ref
+from .promotion import _dependency_asset_hashes
 from .selector import recipe_ref
 
 
@@ -41,16 +42,18 @@ def build_provenance(
     if resource_root:
         command_parts.append(f"--resource-root {resource_root}")
     if shared_runtime_path:
-        command_parts.append(f"--shared-runtime-path {shared_runtime_path}")
+        command_parts.append(f"--shared-runtime {shared_runtime_path}")
     command_parts.append("--json")
     reproduction = {"command": " ".join(command_parts)}
     recipe_meta = recipe_ref(recipe)
     policy_meta = policy_ref(policy_id)
+    asset_hashes = _dependency_asset_hashes(recipe)
     hashes: dict[str, Any] = {
         "request": request_digest,
         "generation": generation_digest,
         "recipe": recipe_meta.get("sha256"),
         "policy": policy_meta.get("sha256"),
+        "assets": asset_hashes,
     }
     if export_result:
         manifest_path = Path(str(export_result.get("manifest", "")))
@@ -83,6 +86,7 @@ def build_provenance(
         "previews": previews,
         "export": export_result or {},
         "runtime_validation": (export_result or {}).get("smoke_test") or (export_result or {}).get("host_smoke_test") or {},
+        "asset_hashes": asset_hashes,
         "reproduction": reproduction,
         "hashes": hashes,
     }

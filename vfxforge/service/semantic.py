@@ -7,10 +7,69 @@ from typing import Any
 from .request import request_lookup_path
 
 
+SEMANTIC_ROLES = frozenset({
+    "warning_geometry",
+    "warning_visual",
+    "warning_duration",
+    "resolve_event",
+    "resolve_visual",
+    "gameplay_footprint",
+})
+
+
 def _review(code: str, message: str, **extra: Any) -> dict[str, Any]:
     item = {"code": code, "message": message}
     item.update(extra)
     return item
+
+
+def layer_semantic_roles(recipe: dict[str, Any]) -> dict[str, str]:
+    roles: dict[str, str] = {}
+    for entry in recipe.get("layer_roles", []):
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
+        role = entry.get("semantic_role")
+        if isinstance(role, str) and role in SEMANTIC_ROLES:
+            roles[str(entry["id"])] = role
+    timing = recipe.get("timing", {})
+    for layer_id in timing.get("resolve_layer_ids", []):
+        if isinstance(layer_id, str):
+            roles.setdefault(layer_id, "resolve_visual")
+    for layer_id in timing.get("warning_layer_ids", []):
+        if isinstance(layer_id, str):
+            roles.setdefault(layer_id, "warning_visual")
+    return roles
+
+
+def protected_document_paths(recipe: dict[str, Any] | None, document: dict[str, Any] | None = None) -> set[str]:
+    protected: set[str] = {"duration"}
+    if document is not None:
+        protected.add("timeline.events")
+        for event in document.get("timeline", {}).get("events", []):
+            if isinstance(event, dict) and event.get("event_id"):
+                protected.add(f"timeline.events.{event.get('event_id')}.time")
+    if not recipe:
+        return protected
+    roles = layer_semantic_roles(recipe)
+    for layer_id, role in roles.items():
+        prefix = f"layers.{layer_id}"
+        protected.add(f"{prefix}.enabled")
+        protected.add(f"{prefix}.start")
+        protected.add(f"{prefix}.duration")
+        if role in {"warning_geometry", "gameplay_footprint"}:
+            protected.update({f"{prefix}.properties.size", f"{prefix}.properties.emission_radius", f"{prefix}.properties.target"})
+        if role == "resolve_event":
+            protected.add(f"{prefix}.properties.event_id")
+    return protected
+
+
+def is_document_path_protected(path: str, protected: set[str]) -> bool:
+    if path in protected:
+        return True
+    for candidate in protected:
+        if path.startswith(candidate + "."):
+            return True
+    return False
 
 
 def validate_recipe_semantics(request: dict[str, Any], recipe: dict[str, Any], policy: dict[str, Any]) -> list[dict[str, Any]]:
@@ -56,14 +115,25 @@ def document_semantic_metrics(document: dict[str, Any]) -> dict[str, Any]:
             resolve_time = float(event.get("time", 0.0))
             break
     metrics["resolve_time_sec"] = resolve_time
+    layer_timings: dict[str, dict[str, float]] = {}
     for layer in document.get("layers", []):
-        if not isinstance(layer, dict) or layer.get("type") != "decal":
+        if not isinstance(layer, dict):
+            continue
+        layer_id = str(layer.get("id", ""))
+        if layer_id:
+            layer_timings[layer_id] = {
+                "start": float(layer.get("start", 0.0)),
+                "duration": float(layer.get("duration", 0.0)),
+                "end": float(layer.get("start", 0.0)) + float(layer.get("duration", 0.0)),
+            }
+        if layer.get("type") != "decal":
             continue
         size = layer.get("properties", {}).get("size")
         if isinstance(size, list) and len(size) >= 2:
             metrics.setdefault("decal_sizes", []).append([float(size[0]), float(size[1])])
         if layer.get("id") in {"warning_line", "warning_rect", "warning_circle"}:
             metrics["primary_decal_size"] = [float(size[0]), float(size[1])] if isinstance(size, list) else None
+    metrics["layer_timings"] = layer_timings
     for layer in document.get("layers", []):
         if isinstance(layer, dict) and layer.get("type") == "beam":
             target = layer.get("properties", {}).get("target")
