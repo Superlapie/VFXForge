@@ -7,7 +7,7 @@ name = "vfxforge"
 version = "0.1.0"
 description = "AI-first Godot VFX authoring model and tooling"
 readme = "README.md"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 requires-python = ">=3.10"
 dependencies = ["Pillow>=9.0"]
 

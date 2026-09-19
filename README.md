@@ -1,7 +1,8 @@
 # VFX Forge
 
 [![Godot 4.x](https://img.shields.io/badge/Godot-4.x-478CBF?logo=godotengine&logoColor=white)](https://godotengine.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-orange.svg)](LICENSE)
+[![Commercial license available](https://img.shields.io/badge/commercial%20use-contact%20author-blue.svg)](COMMERCIAL.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Offline & deterministic](https://img.shields.io/badge/offline-deterministic-2ea043)](#verification)
 
@@ -83,9 +84,15 @@ The gate runs focused Python model/CLI/renderer tests, user-facing CLI + GUI E2E
 - [CLI reference](docs/CLI_REFERENCE.md)
 - [Layer reference](docs/LAYER_REFERENCE.md)
 - [Contributing](CONTRIBUTING.md)
+- [Commercial licensing](COMMERCIAL.md)
 
 Read [docs/QUICKSTART.md](docs/QUICKSTART.md), [docs/AI_WORKFLOW.md](docs/AI_WORKFLOW.md), and [AGENTS.md](AGENTS.md) for the working contract.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+VFX Forge uses **dual licensing**:
+
+- **Noncommercial use** — free under the [PolyForm Noncommercial License 1.0.0](LICENSE). You can read, fork, contribute, learn from, and use the project for personal, hobby, educational, and other noncommercial purposes.
+- **Commercial use** — requires a separate paid license. See [COMMERCIAL.md](COMMERCIAL.md) for what counts as commercial use and how to contact me.
+
+If you want to ship a commercial game, product, service, or client deliverable with VFX Forge in the pipeline, get a commercial license first.
