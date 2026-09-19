@@ -13,6 +13,8 @@ var child_depth: int = 0
 var asset_root: String = "res://"
 var generated_nodes: Array[Node] = []
 var beam_nodes: Array[MeshInstance3D] = []
+var editor_solo_layer_id: String = ""
+var editor_selected_layer_id: String = ""
 
 
 func set_document(value: Dictionary, asset_base: String = "") -> void:
@@ -81,6 +83,31 @@ func seek(time: float) -> void:
     elapsed = clamp(time, 0.0, _duration())
     _update_runtime(elapsed)
     time_changed.emit(elapsed, _duration())
+
+
+func set_editor_selection(layer_id: String) -> void:
+    editor_selected_layer_id = layer_id
+    _apply_editor_selection()
+
+
+func set_editor_solo(layer_id: String) -> void:
+    editor_solo_layer_id = layer_id
+    _update_runtime(elapsed)
+
+
+func _apply_editor_selection() -> void:
+    for node in generated_nodes:
+        if not is_instance_valid(node):
+            continue
+        var layer_variant: Variant = node.get_meta("vfx_layer", {})
+        if not layer_variant is Dictionary:
+            continue
+        var layer_id := str(layer_variant.get("id", ""))
+        var selected: bool = layer_id == editor_selected_layer_id and not editor_selected_layer_id.is_empty()
+        if node is MeshInstance3D:
+            var mesh_instance := node as MeshInstance3D
+            mesh_instance.set_meta("editor_selected", selected)
+    _update_runtime(elapsed)
 
 
 func _process(delta: float) -> void:
@@ -360,11 +387,13 @@ func _update_runtime(time: float) -> void:
         if not layer_variant is Dictionary:
             continue
         var layer: Dictionary = layer_variant
+        var layer_id := str(layer.get("id", ""))
         var start: float = float(layer.get("start", 0.0))
         var layer_duration: float = max(0.001, float(layer.get("duration", duration)))
         var local: float = time - start
         var active: bool = local >= 0.0 and local <= layer_duration
-        node.visible = active
+        var solo_ok: bool = editor_solo_layer_id.is_empty() or editor_solo_layer_id == layer_id
+        node.visible = active and solo_ok
         if not active:
             continue
         var normalized: float = clamp(local / layer_duration, 0.0, 1.0)
@@ -401,7 +430,8 @@ func _update_runtime(time: float) -> void:
             var scale_value: float = _curve_value(scale_curve, normalized, 1.0)
             var base_scale_value: Variant = mesh_instance.get_meta("vfx_base_scale", Vector3.ONE)
             var base_scale: Vector3 = base_scale_value if base_scale_value is Vector3 else Vector3.ONE
-            mesh_instance.scale = base_scale * scale_value
+            var selection_scale: float = 1.04 if layer_id == editor_selected_layer_id and not editor_selected_layer_id.is_empty() else 1.0
+            mesh_instance.scale = base_scale * scale_value * selection_scale
             if layer.get("type", "") == "mesh_effect":
                 var rotation_speed := _vec3(properties.get("rotation_speed", [0.0, 45.0, 0.0]))
                 mesh_instance.rotation_degrees = _vec3(properties.get("rotation", [0.0, 0.0, 0.0])) + rotation_speed * local
