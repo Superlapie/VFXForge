@@ -60,10 +60,16 @@ def generator_identity(
     tool_version: str | None = None,
     revision: str | None = None,
     compiler_contract_version: int | None = None,
+    runtime_contract_version: int | None = None,
 ) -> dict[str, object]:
+    if runtime_contract_version is None:
+        from .service.runtime_conformance import RUNTIME_CONTRACT_VERSION
+
+        runtime_contract_version = RUNTIME_CONTRACT_VERSION
     return {
         "tool_version": tool_version or TOOL_VERSION,
         "tool_revision": revision if revision is not None else tool_revision(),
         "compiler_contract_version": compiler_contract_version if compiler_contract_version is not None else COMPILER_CONTRACT_VERSION,
+        "runtime_contract_version": runtime_contract_version,
         "runtime_sha256": runtime_file_hashes(),
     }

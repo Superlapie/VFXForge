@@ -1,0 +1,14 @@
+{
+  "request_version": 1,
+  "effect_id": "world_portal",
+  "intent": {
+    "kind": "portal",
+    "element": "arcane",
+    "purpose": "travel",
+    "intensity": "standard"
+  },
+  "context": {
+    "target": "enigma",
+    "usage": "ambient_world"
+  }
+}

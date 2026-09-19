@@ -11,7 +11,7 @@ from .selector import list_recipes, load_recipe, select_recipe
 
 
 def request_dir() -> Path:
-    return install_root() / "examples" / "requests"
+    return install_root() / "templates" / "requests"
 
 
 def load_recipe_matrix() -> dict[str, str]:

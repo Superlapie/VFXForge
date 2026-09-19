@@ -354,11 +354,19 @@ func _create_trail(layer: Dictionary) -> Node:
     var trail: Node = trail_script.new()
     trail.name = str(layer.get("id", "trail"))
     var properties := _properties(layer)
+    var width_curve: Dictionary = {}
+    var layer_curves: Variant = layer.get("curves", {})
+    if layer_curves is Dictionary:
+        var authored_width: Variant = layer_curves.get("width", {})
+        if authored_width is Dictionary:
+            width_curve = authored_width
     trail.configure(
         float(properties.get("width", 0.18)),
         float(properties.get("lifetime", 0.35)),
         _color(properties.get("color", "#9C8CFFFF")),
         clampi(int(properties.get("segments", 20)), 2, 64),
+        width_curve,
+        float(properties.get("alpha", 1.0)),
     )
     var target_ref := str(properties.get("target", ""))
     trail.set("tracking_path", target_ref)
@@ -381,7 +389,8 @@ func _create_decal(layer: Dictionary) -> MeshInstance3D:
     var size := _vec2(properties.get("size", [2.0, 2.0]))
     plane.size = size
     decal.mesh = plane
-    decal.rotation_degrees.x = -90.0
+    decal.rotation_degrees = Vector3(-90.0, float(properties.get("rotate", 0.0)), 0.0)
+    decal.position.y = float(properties.get("height", 0.0))
     decal.material_override = _material(layer)
     return decal
 
@@ -390,14 +399,14 @@ func _create_mesh_effect(layer: Dictionary) -> MeshInstance3D:
     var properties := _properties(layer)
     var mesh_instance := MeshInstance3D.new()
     mesh_instance.name = str(layer.get("id", "mesh_effect"))
+    var authored_size := _vec3(properties.get("size", [1.0, 1.0, 1.0]))
     var custom_mesh := _load_mesh(str(properties.get("mesh_asset", "")))
     if custom_mesh != null:
         mesh_instance.mesh = custom_mesh
-        mesh_instance.set_meta("vfx_base_scale", _vec3(properties.get("size", [1.0, 1.0, 1.0])))
     var mesh_name := str(properties.get("mesh", "sphere"))
     if custom_mesh == null and mesh_name == "box":
         var box := BoxMesh.new()
-        box.size = _vec3(properties.get("size", [1.0, 1.0, 1.0]))
+        box.size = authored_size
         mesh_instance.mesh = box
     elif custom_mesh == null and mesh_name == "torus":
         var torus := TorusMesh.new()
@@ -409,6 +418,7 @@ func _create_mesh_effect(layer: Dictionary) -> MeshInstance3D:
         sphere.radius = 0.5
         sphere.height = 1.0
         mesh_instance.mesh = sphere
+    mesh_instance.set_meta("vfx_base_scale", authored_size)
     mesh_instance.material_override = _material(layer)
     return mesh_instance
 
@@ -447,6 +457,10 @@ func _create_child_effect(layer: Dictionary) -> Node:
 func _create_marker(layer: Dictionary) -> Node3D:
     var marker := Node3D.new()
     marker.name = str(layer.get("id", "marker"))
+    if str(layer.get("type", "")) == "event_marker":
+        var payload: Variant = _properties(layer).get("payload", {})
+        if payload is Dictionary:
+            marker.set_meta("event_payload", payload.duplicate(true))
     return marker
 
 
@@ -474,7 +488,10 @@ func _update_runtime(time: float) -> void:
         if node is OmniLight3D:
             var light := node as OmniLight3D
             var energy_curve: Variant = layer.get("curves", {}).get("energy", {})
-            light.light_energy = float(properties.get("energy", 1.0)) * _curve_value(energy_curve, normalized, 1.0)
+            var energy: float = float(properties.get("energy", 1.0)) * _curve_value(energy_curve, normalized, 1.0)
+            if bool(properties.get("fade", false)):
+                energy *= min(normalized * 4.0, (1.0 - normalized) * 4.0, 1.0)
+            light.light_energy = energy
         elif node is Sprite3D:
             var sprite := node as Sprite3D
             var scale_curve: Variant = layer.get("curves", {}).get("scale", {})
@@ -508,9 +525,15 @@ func _update_runtime(time: float) -> void:
             if layer.get("type", "") == "mesh_effect":
                 var rotation_speed := _vec3(properties.get("rotation_speed", [0.0, 45.0, 0.0]))
                 mesh_instance.rotation_degrees = _vec3(properties.get("rotation", [0.0, 0.0, 0.0])) + rotation_speed * local
+                var pulse := maxf(0.0, float(properties.get("pulse", 0.0)))
+                if pulse > 0.0:
+                    var pulse_scale := 1.0 + sin(local * TAU) * pulse
+                    mesh_instance.scale *= Vector3.ONE * pulse_scale
             if mesh_instance.material_override is StandardMaterial3D:
                 var material := mesh_instance.material_override as StandardMaterial3D
                 var alpha: float = _curve_value(layer.get("curves", {}).get("alpha", {}), normalized, 1.0)
+                if layer.get("type", "") == "decal" and bool(properties.get("fade", false)):
+                    alpha *= min(normalized * 4.0, (1.0 - normalized) * 4.0, 1.0)
                 var color := _color(properties.get("color", layer.get("material", {}).get("tint", "#FFFFFFFF")))
                 color.a *= alpha
                 material.albedo_color = color
@@ -526,12 +549,16 @@ func _update_beam(node: MeshInstance3D, layer: Dictionary, normalized: float) ->
     var segments: int = clamp(int(properties.get("segments", 12)), 2, 64)
     var thickness: float = max(0.01, float(properties.get("thickness", 0.12))) * _curve_value(layer.get("curves", {}).get("width", {}), normalized, 1.0)
     var noise: float = float(properties.get("noise", 0.08))
+    var fade: float = clampf(float(properties.get("fade", 0.0)), 0.0, 1.0)
+    var scroll_speed: float = float(properties.get("scroll_speed", 0.0))
     var random := RandomNumberGenerator.new()
     random.seed = int(document.get("seed", 0)) + str(layer.get("id", "beam")).hash()
     var mesh := ImmediateMesh.new()
     var material := node.material_override as Material
     if material == null:
         material = _material(layer)
+    if material is StandardMaterial3D and scroll_speed != 0.0:
+        (material as StandardMaterial3D).uv1_offset = Vector3(normalized * scroll_speed, 0.0, 0.0)
     mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP, material)
     for index in range(segments + 1):
         var ratio := float(index) / float(segments)
@@ -542,8 +569,13 @@ func _update_beam(node: MeshInstance3D, layer: Dictionary, normalized: float) ->
         var side := tangent.cross(Vector3.UP).normalized()
         if side.length_squared() < 0.001:
             side = tangent.cross(Vector3.RIGHT).normalized()
+        var edge_fade := 1.0
+        if fade > 0.0:
+            edge_fade = min(ratio * (1.0 + fade), (1.0 - ratio) * (1.0 + fade), 1.0)
+        mesh.surface_set_color(Color(1.0, 1.0, 1.0, edge_fade))
         mesh.surface_set_uv(Vector2(ratio, 0.0))
         mesh.surface_add_vertex(point - side * thickness)
+        mesh.surface_set_color(Color(1.0, 1.0, 1.0, edge_fade))
         mesh.surface_set_uv(Vector2(ratio, 1.0))
         mesh.surface_add_vertex(point + side * thickness)
     mesh.surface_end()
@@ -562,7 +594,16 @@ func _material(layer: Dictionary) -> StandardMaterial3D:
         "premultiplied": BaseMaterial3D.BLEND_MODE_PREMULT_ALPHA,
         "multiply": BaseMaterial3D.BLEND_MODE_MUL
     }.get(blend, BaseMaterial3D.BLEND_MODE_ADD)
-    material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED if str(settings.get("billboard", "enabled")) == "enabled" else BaseMaterial3D.BILLBOARD_DISABLED
+    material.billboard_mode = {
+        "enabled": BaseMaterial3D.BILLBOARD_ENABLED,
+        "disabled": BaseMaterial3D.BILLBOARD_DISABLED,
+        "y": BaseMaterial3D.BILLBOARD_FIXED_Y,
+    }.get(str(settings.get("billboard", "enabled")), BaseMaterial3D.BILLBOARD_ENABLED)
+    if str(layer.get("type", "")) in ["particle", "mesh_particle"]:
+        material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+        material.vertex_color_use_as_albedo = true
+    elif str(layer.get("type", "")) == "beam":
+        material.vertex_color_use_as_albedo = true
     material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
     var property_color: Variant = _properties(layer).get("color", "")
     var tint_reference: Variant = property_color if property_color is String and not str(property_color).is_empty() else settings.get("tint", "#FFFFFFFF")

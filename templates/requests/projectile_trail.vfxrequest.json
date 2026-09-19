@@ -1,0 +1,14 @@
+{
+  "request_version": 1,
+  "effect_id": "combat_projectile_trail",
+  "intent": {
+    "kind": "projectile_trail",
+    "element": "neutral",
+    "purpose": "cosmetic",
+    "intensity": "standard"
+  },
+  "context": {
+    "target": "generic",
+    "usage": "normal_combat"
+  }
+}

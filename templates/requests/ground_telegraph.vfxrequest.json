@@ -1,0 +1,19 @@
+{
+  "request_version": 1,
+  "effect_id": "boss_circle_tell",
+  "intent": {
+    "kind": "ground_telegraph",
+    "element": "arcane",
+    "purpose": "danger_warning",
+    "intensity": "boss"
+  },
+  "gameplay": {
+    "shape": "circle",
+    "radius_tiles": 2,
+    "tell_ms": 900
+  },
+  "context": {
+    "target": "enigma",
+    "usage": "ground_telegraph"
+  }
+}

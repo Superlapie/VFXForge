@@ -49,6 +49,7 @@ def generation_digest(
     asset_catalog: dict[str, str] | None = None,
     tool_revision: str | None = None,
     compiler_contract_version: int | None = None,
+    runtime_contract_version: int | None = None,
     runtime_sha256: dict[str, str] | None = None,
 ) -> str:
     asset_hashes = _dependency_asset_hashes(recipe, asset_root=asset_root, catalog=asset_catalog)
@@ -56,6 +57,7 @@ def generation_digest(
         tool_version=tool_version,
         revision=tool_revision,
         compiler_contract_version=compiler_contract_version,
+        runtime_contract_version=runtime_contract_version,
     )
     if runtime_sha256 is not None:
         identity["runtime_sha256"] = runtime_sha256

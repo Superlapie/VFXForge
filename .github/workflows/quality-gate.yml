@@ -70,7 +70,7 @@ jobs:
           /tmp/vfxforge-wheel/bin/python -m vfxforge.cli capabilities --policy enigma --json
           /tmp/vfxforge-wheel/bin/python -m vfxforge.cli forge --request "$REQUEST" --policy default --workspace /tmp/vfxforge-service --no-export --json
           /tmp/vfxforge-wheel/bin/python -m vfxforge.cli forge --request "$REQUEST" --policy enigma --workspace /tmp/vfxforge-enigma --allow-replace --json > /tmp/vfxforge-enigma-forge.json || true
-          python - <<'PY'
+          /tmp/vfxforge-wheel/bin/python - <<'PY'
           import json
           from pathlib import Path
           payload = json.loads(Path("/tmp/vfxforge-enigma-forge.json").read_text(encoding="utf-8"))

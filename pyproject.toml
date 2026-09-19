@@ -29,6 +29,7 @@ vfxforge = ["_revision.txt"]
 "share/vfxforge/schema" = ["schema/*.json"]
 "share/vfxforge/godot/runtime" = ["godot/runtime/*.gd"]
 "share/vfxforge/godot/host_smoke" = ["godot/host_smoke/*"]
+"share/vfxforge/templates/requests" = ["templates/requests/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

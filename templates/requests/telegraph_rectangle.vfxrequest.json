@@ -1,0 +1,20 @@
+{
+  "request_version": 1,
+  "effect_id": "ground_rect_tell",
+  "intent": {
+    "kind": "ground_telegraph",
+    "element": "arcane",
+    "purpose": "danger_warning",
+    "intensity": "standard"
+  },
+  "gameplay": {
+    "shape": "rectangle",
+    "width_tiles": 2,
+    "length_tiles": 3,
+    "tell_ms": 1200
+  },
+  "context": {
+    "target": "enigma",
+    "usage": "ground_telegraph"
+  }
+}

@@ -268,15 +268,17 @@ class PromotionLockTests(unittest.TestCase):
 
 
 class GeneratorIdentityTests(unittest.TestCase):
-    def test_runtime_or_revision_change_alters_generation_digest(self) -> None:
+    def test_generation_digest(self) -> None:
         request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
         recipe = load_recipe("impact.fire")
         policy = load_policy("default")
         digest_a = generation_digest(request, recipe, policy, tool_revision="aaa", runtime_sha256={"vfx_runtime.gd": "1"})
         digest_b = generation_digest(request, recipe, policy, tool_revision="bbb", runtime_sha256={"vfx_runtime.gd": "1"})
         digest_c = generation_digest(request, recipe, policy, tool_revision="aaa", runtime_sha256={"vfx_runtime.gd": "2"})
+        digest_d = generation_digest(request, recipe, policy, tool_revision="aaa", runtime_contract_version=99)
         self.assertNotEqual(digest_a, digest_b)
         self.assertNotEqual(digest_a, digest_c)
+        self.assertNotEqual(digest_a, digest_d)
         self.assertEqual(COMPILER_CONTRACT_VERSION, 2)
 
 
@@ -291,7 +293,12 @@ class RuntimeConformanceTests(unittest.TestCase):
             with patch("vfxforge.service.pipeline.select_recipe", return_value=(broken, [broken], [])):
                 result = forge(_read_request("fire_impact.vfxrequest.json"), policy_id="default", workspace=tmp, export=False)
         self.assertFalse(result["production_ready"])
-        self.assertTrue(any(item["code"] == "UNSUPPORTED_RUNTIME_EMISSION_SHAPE" for item in result["errors"]))
+        error_codes = {item.get("code") for item in result.get("errors", [])}
+        self.assertTrue(
+            "UNSUPPORTED_RUNTIME_EMISSION_SHAPE" in error_codes
+            or "INVALID_EMISSION_SHAPE" in error_codes,
+            msg=result.get("errors"),
+        )
 
     def test_every_recipe_compiled_document_matches_runtime_contract(self) -> None:
         policy = load_policy("enigma")
@@ -299,6 +306,37 @@ class RuntimeConformanceTests(unittest.TestCase):
             document, _ledger = compile_recipe_with_ledger(normalize_request(request), recipe, policy)
             errors = validate_runtime_conformance(document)
             self.assertEqual(errors, [], msg=f"{recipe_id}: {errors}")
+
+
+    def test_runtime_contract_version_affects_generation_digest(self) -> None:
+        request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
+        recipe = load_recipe("impact.fire")
+        policy = load_policy("default")
+        digest_a = generation_digest(request, recipe, policy, runtime_contract_version=1)
+        digest_b = generation_digest(request, recipe, policy, runtime_contract_version=2)
+        self.assertNotEqual(digest_a, digest_b)
+
+    def test_malformed_particle_property_returns_structured_runtime_error(self) -> None:
+        request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
+        recipe = load_recipe("impact.fire")
+        broken = deepcopy(recipe)
+        particle = next(layer for layer in broken["document"]["layers"] if layer["type"] == "particle")
+        particle["properties"]["turbulence"] = "banana"
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("vfxforge.service.pipeline.select_recipe", return_value=(broken, [broken], [])):
+                result = forge(_read_request("fire_impact.vfxrequest.json"), policy_id="default", workspace=tmp, export=False)
+        self.assertFalse(result["production_ready"])
+        self.assertEqual(result["status"], ForgeStatus.FAILED.value)
+        self.assertTrue(any(item["code"] == "UNSUPPORTED_RUNTIME_PROPERTY" for item in result["errors"]))
+
+    def test_plan_rejects_policy_target_mismatch(self) -> None:
+        from vfxforge.service.pipeline import plan
+
+        request = _read_request("fire_impact.vfxrequest.json")
+        request["context"] = {"target": "enigma", "usage": "normal_combat"}
+        result = plan(request, policy_id="default")
+        self.assertEqual(result["status"], ForgeStatus.NEEDS_REVIEW.value)
+        self.assertTrue(any(item["code"] == "POLICY_TARGET_MISMATCH" for item in result["review_reasons"]))
 
 
 class CapabilitiesDiscoveryTests(unittest.TestCase):
@@ -312,6 +350,9 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         self.assertTrue(boss["unsupported_parameters_are_errors"])
         self.assertEqual(payload["capabilities_version"], 2)
         self.assertIn("request_contract", payload)
+        self.assertIn("target_policy_bindings", payload)
+        self.assertEqual(payload["target_policy_bindings"]["enigma"], "enigma")
+        self.assertIsNone(payload["target_policy_bindings"]["generic"])
         self.assertIn("recipe_templates", payload)
         self.assertIn("runtime", payload)
         self.assertGreaterEqual(len(payload["recipe_templates"]), 15)

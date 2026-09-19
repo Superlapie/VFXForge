@@ -45,6 +45,19 @@ def plan(raw_request: dict[str, Any], policy_id: str = "default") -> dict[str, A
         return make_result(ForgeStatus.FAILED, str(raw_request.get("effect_id", "unknown")), errors=errors)
     normalized = normalize_request(document)
     policy = load_policy(policy_id)
+    target_review = validate_policy_target(normalized, policy_id)
+    if target_review:
+        return {
+            "plan_version": 1,
+            "normalized_request": normalized,
+            "request_hash": request_hash(normalized),
+            "policy": policy_ref(policy_id),
+            "recipe": None,
+            "match_count": 0,
+            "expected_budget_profile": None,
+            "review_reasons": [target_review],
+            "status": ForgeStatus.NEEDS_REVIEW.value,
+        }
     recipe, matches, review = select_recipe(normalized)
     if recipe:
         review = review + validate_recipe_semantics(normalized, recipe, policy)
@@ -203,6 +216,18 @@ def forge(
     write_document(candidate_doc_path, corrected)
     project_dir = Path(asset_root).resolve() if asset_root else candidate_doc_path.parent
     revalidation = validate_compiled_effect(corrected, policy, usage, project_dir)
+    if not revalidation["valid"]:
+        return make_result(
+            ForgeStatus.FAILED,
+            effect_id,
+            job_id=job_id,
+            recipe=recipe_ref(recipe),
+            policy=policy_ref(policy_id),
+            seed=corrected.get("seed"),
+            corrections=corrections,
+            validation=revalidation,
+            errors=revalidation["errors"],
+        )
     runtime_review = validate_runtime_conformance(corrected)
     if runtime_review:
         return make_result(
@@ -215,18 +240,6 @@ def forge(
             corrections=corrections,
             validation=revalidation,
             errors=runtime_review,
-        )
-    if not revalidation["valid"]:
-        return make_result(
-            ForgeStatus.FAILED,
-            effect_id,
-            job_id=job_id,
-            recipe=recipe_ref(recipe),
-            policy=policy_ref(policy_id),
-            seed=corrected.get("seed"),
-            corrections=corrections,
-            validation=revalidation,
-            errors=revalidation["errors"],
         )
     preview_cameras = policy.get("preview_cameras", ["mmo"])
     previews = render_preview_suite(corrected, job / "previews", preview_cameras)

@@ -1,0 +1,14 @@
+{
+  "request_version": 1,
+  "effect_id": "combat_dust_impact",
+  "intent": {
+    "kind": "impact",
+    "element": "earth",
+    "purpose": "damage",
+    "intensity": "standard"
+  },
+  "context": {
+    "target": "enigma",
+    "usage": "normal_combat"
+  }
+}

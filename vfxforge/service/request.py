@@ -177,6 +177,35 @@ def normalize_request(raw: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def request_contract_dict() -> dict[str, Any]:
+    return {
+        "request_version": REQUEST_VERSION,
+        "intent": {
+            "kind": sorted(INTENT_KINDS),
+            "element": sorted(INTENT_ELEMENTS),
+            "purpose": sorted(INTENT_PURPOSES),
+            "intensity": sorted(INTENT_INTENSITIES),
+        },
+        "context": {
+            "target": sorted(CONTEXT_TARGETS),
+            "usage": sorted(CONTEXT_USAGES),
+        },
+        "gameplay": {
+            "shape": sorted(GAMEPLAY_SHAPES),
+            "radius_tiles": "number > 0",
+            "width_tiles": "number > 0",
+            "length_tiles": "number > 0",
+            "source_height": "number > 0",
+            "target_distance": "number > 0",
+            "tell_ms": "number >= 50",
+            "active_ms": "number >= 0",
+            "duration_ms": "number >= 50",
+            "loop": "boolean",
+            "attachment": "string",
+        },
+    }
+
+
 def request_lookup_path(request: dict[str, Any], dotted: str) -> Any:
     current: Any = request
     for part in dotted.split("."):

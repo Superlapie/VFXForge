@@ -8,12 +8,19 @@ from typing import Any
 TARGET_POLICY = {
     "enigma": "enigma",
     "standalone": "default",
-    "generic": "default",
 }
 
 
+def target_policy_bindings() -> dict[str, str | None]:
+    return {
+        "enigma": "enigma",
+        "standalone": "default",
+        "generic": None,
+    }
+
+
 def expected_policy_for_target(target: str | None) -> str | None:
-    if not target:
+    if not target or str(target) == "generic":
         return None
     return TARGET_POLICY.get(str(target))
 

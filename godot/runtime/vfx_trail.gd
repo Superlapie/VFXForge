@@ -12,15 +12,25 @@ var preview_motion: bool = false
 var tracking_path: String = ""
 var tracking_node: Node3D = null
 var trail_segments: int = 20
+var width_profile_curve: Dictionary = {}
 var _sample_interval: float = 0.02
 var _sample_accumulator: float = 0.0
 
 
-func configure(width: float, lifetime: float, color: Color, segments: int = 20) -> void:
+func configure(
+    width: float,
+    lifetime: float,
+    color: Color,
+    segments: int = 20,
+    width_curve: Dictionary = {},
+    alpha_multiplier: float = 1.0,
+) -> void:
     trail_width = maxf(0.01, width)
     trail_lifetime = maxf(0.02, lifetime)
     trail_color = color
+    trail_color.a *= clampf(alpha_multiplier, 0.0, 1.0)
     trail_segments = clampi(segments, 2, 64)
+    width_profile_curve = width_curve if width_curve is Dictionary else {}
     _sample_interval = trail_lifetime / float(trail_segments)
     trail_material = StandardMaterial3D.new()
     trail_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -107,7 +117,8 @@ func _rebuild_mesh() -> void:
         if side.length_squared() < 0.001:
             side = tangent.cross(Vector3.RIGHT).normalized()
         var ratio: float = float(index) / maxf(1.0, float(history.size() - 1))
-        var width: float = trail_width * (1.0 - ratio) * (1.0 - ratio * 0.35)
+        var width_profile: float = _curve_value(width_profile_curve, ratio, 1.0 - ratio)
+        var width: float = trail_width * width_profile
         var alpha: float = (1.0 - ratio) * clampf(1.0 - float(sample.get("age", 0.0)) / trail_lifetime, 0.0, 1.0)
         var vertex_color := Color(trail_color.r, trail_color.g, trail_color.b, trail_color.a * alpha)
         ribbon.surface_set_color(vertex_color)
@@ -118,3 +129,28 @@ func _rebuild_mesh() -> void:
         ribbon.surface_add_vertex(position + side * width)
     ribbon.surface_end()
     mesh = ribbon
+
+
+func _curve_value(value: Variant, position: float, fallback: float) -> float:
+    if not value is Dictionary:
+        return fallback
+    var points_variant: Variant = value.get("points", [])
+    if not points_variant is Array or points_variant.is_empty():
+        return fallback
+    var parsed: Array[Vector2] = []
+    for point_variant in points_variant:
+        if point_variant is Dictionary:
+            parsed.append(Vector2(float(point_variant.get("x", 0.0)), float(point_variant.get("y", 0.0))))
+    if parsed.is_empty():
+        return fallback
+    parsed.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x < b.x)
+    if position <= parsed[0].x:
+        return parsed[0].y
+    if position >= parsed[-1].x:
+        return parsed[-1].y
+    for curve_index in range(parsed.size() - 1):
+        var first := parsed[curve_index]
+        var second := parsed[curve_index + 1]
+        if position >= first.x and position <= second.x:
+            return lerpf(first.y, second.y, inverse_lerp(first.x, second.x, position))
+    return fallback

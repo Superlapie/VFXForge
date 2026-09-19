@@ -1,0 +1,14 @@
+{
+  "request_version": 1,
+  "effect_id": "combat_neutral_impact",
+  "intent": {
+    "kind": "impact",
+    "element": "neutral",
+    "purpose": "damage",
+    "intensity": "standard"
+  },
+  "context": {
+    "target": "enigma",
+    "usage": "normal_combat"
+  }
+}

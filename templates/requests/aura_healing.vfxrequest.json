@@ -1,0 +1,14 @@
+{
+  "request_version": 1,
+  "effect_id": "healing_aura",
+  "intent": {
+    "kind": "aura",
+    "element": "holy",
+    "purpose": "healing",
+    "intensity": "standard"
+  },
+  "context": {
+    "target": "enigma",
+    "usage": "normal_combat"
+  }
+}
