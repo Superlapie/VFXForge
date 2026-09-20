@@ -143,7 +143,7 @@ def write_document(path: str | Path, document: dict[str, Any], make_backup: bool
     """Write a document atomically, retaining a last-known-good .bak copy."""
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    serialized = json.dumps(document, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
+    serialized = json.dumps(document, indent=2, ensure_ascii=False, sort_keys=False, allow_nan=False) + "\n"
     fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
     temporary = Path(temporary_name)
     try:

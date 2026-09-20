@@ -287,11 +287,9 @@ func _create_particle(layer: Dictionary, use_mesh: bool) -> GPUParticles3D:
                 for surface_index in range(array_mesh.get_surface_count()):
                     array_mesh.surface_set_material(surface_index, particle_material)
         else:
+            var mesh_name := str(properties.get("mesh", "box"))
             var size := _vec3(properties.get("size", [0.15, 0.15, 0.15]))
-            var box := BoxMesh.new()
-            box.size = size
-            box.material = particle_material
-            particles.draw_pass_1 = box
+            particles.draw_pass_1 = _create_particle_primitive(mesh_name, size, particle_material)
     else:
         var quad := QuadMesh.new()
         var size2 := _vec2(properties.get("size", [0.16, 0.16]))
@@ -312,6 +310,32 @@ func _resolve_billboard_mode(layer: Dictionary) -> int:
     }.get(mode, BaseMaterial3D.BILLBOARD_ENABLED)
 
 
+func _create_particle_primitive(mesh_name: String, size: Vector3, material: Material) -> Mesh:
+    match mesh_name:
+        "box":
+            var box := BoxMesh.new()
+            box.size = size
+            box.material = material
+            return box
+        "sphere":
+            var sphere := SphereMesh.new()
+            sphere.radius = maxf(0.01, min(size.x, min(size.y, size.z)) * 0.5)
+            sphere.height = sphere.radius * 2.0
+            sphere.material = material
+            return sphere
+        "torus":
+            var torus := TorusMesh.new()
+            torus.inner_radius = maxf(0.05, size.x * 0.35)
+            torus.outer_radius = maxf(0.08, size.x * 0.5)
+            torus.material = material
+            return torus
+        _:
+            var quad := QuadMesh.new()
+            quad.size = Vector2(size.x, size.y)
+            quad.material = material
+            return quad
+
+
 func _create_card(layer: Dictionary) -> Node:
     var properties := _properties(layer)
     var texture_ref := str(properties.get("texture", ""))
@@ -326,13 +350,15 @@ func _create_card(layer: Dictionary) -> Node:
         sprite.material_override = sprite_material
         var size := _vec2(properties.get("size", [1.0, 1.0]))
         var texture_size := texture.get_size()
-        sprite.pixel_size = size.x / max(1.0, texture_size.x)
-        var height_scale: float = size.y / maxf(0.001, texture_size.y * sprite.pixel_size)
-        sprite.set_meta("vfx_base_scale", Vector3(1.0, height_scale, 1.0))
         var frame_count: int = max(1, int(properties.get("flipbook_frames", 1)))
+        var columns: int = max(1, int(properties.get("flipbook_columns", 1)))
+        var rows: int = max(1, int(properties.get("flipbook_rows", 1)))
+        var frame_width: float = texture_size.x / float(columns) if frame_count > 1 else texture_size.x
+        var frame_height: float = texture_size.y / float(rows) if frame_count > 1 else texture_size.y
+        sprite.pixel_size = size.x / max(1.0, frame_width)
+        var height_scale: float = size.y / maxf(0.001, frame_height * sprite.pixel_size)
+        sprite.set_meta("vfx_base_scale", Vector3(1.0, height_scale, 1.0))
         if frame_count > 1:
-            var columns: int = max(1, int(properties.get("flipbook_columns", 1)))
-            var rows: int = max(1, int(properties.get("flipbook_rows", 1)))
             sprite.region_enabled = true
             sprite.region_rect = Rect2(0, 0, texture_size.x / columns, texture_size.y / rows)
             sprite.set_meta("flipbook_columns", columns)
@@ -424,6 +450,10 @@ func _create_mesh_effect(layer: Dictionary) -> MeshInstance3D:
         var box := BoxMesh.new()
         box.size = Vector3.ONE
         mesh_instance.mesh = box
+    elif custom_mesh == null and mesh_name == "quad":
+        var quad := QuadMesh.new()
+        quad.size = Vector2(authored_size.x, authored_size.y)
+        mesh_instance.mesh = quad
     elif custom_mesh == null and mesh_name == "torus":
         var torus := TorusMesh.new()
         torus.inner_radius = 0.35

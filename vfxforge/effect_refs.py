@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .model import read_document
+
+
+EXPORT_CONTAINER_NAMES = frozenset({"export", "exports", "build", "dist", "production"})
+EXPORT_EFFECT_NAME = re.compile(r"^.+_[0-9a-f]{8}(?:_\d+)?\.vfx\.json$")
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,21 @@ def _contained_resolved(project_root: Path, candidate: Path) -> Path | None:
     except ValueError:
         return None
     return resolved
+
+
+def is_source_effect_document(path: Path, project_root: Path) -> bool:
+    contained = _contained_resolved(project_root, path)
+    if contained is None:
+        return False
+    relative = contained.relative_to(project_root.resolve())
+    for part in relative.parts[:-1]:
+        if part in EXPORT_CONTAINER_NAMES:
+            return False
+        if part.startswith(".") and "export-staging" in part:
+            return False
+    if EXPORT_EFFECT_NAME.match(relative.name):
+        return False
+    return True
 
 
 def is_path_like_effect_reference(reference: str) -> bool:
@@ -69,6 +89,8 @@ def _resolve_path_candidate(reference: str, *, document_dir: Path, project_root:
 def _resolve_stable_id(reference: str, project_root: Path) -> EffectResolveResult:
     matches: list[Path] = []
     for path in sorted(project_root.rglob("*.vfx.json")):
+        if not is_source_effect_document(path, project_root):
+            continue
         contained = _contained_resolved(project_root, path)
         if contained is None:
             continue

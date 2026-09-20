@@ -618,7 +618,7 @@ def validate_document(
                 if not isinstance(reference, str) or not reference:
                     errors.append(issue("error", "INVALID_EFFECT_REFERENCE", f"dependencies.effects[{index}]", "Effect dependencies must be non-empty strings.", value=reference))
                 elif project is not None and document_dir is not None:
-                    resolved = resolve_effect(reference, document_dir=project, project_root=project)
+                    resolved = resolve_effect(reference, document_dir=document_dir, project_root=project)
                     if resolved.error_code == "AMBIGUOUS_EFFECT_ID":
                         errors.append(issue("error", "AMBIGUOUS_EFFECT_ID", f"dependencies.effects[{index}]", resolved.error_message or reference, "Use a unique stable ID or an explicit path.", reference))
                     elif resolved.path is None:

@@ -289,6 +289,22 @@ class ChildEffectSafetyTests(unittest.TestCase):
             validation = validate_document(parent, root, document_path=parent_path)
             self.assertTrue(validation["valid"], msg=validation["errors"])
 
+    def test_dependencies_effects_resolve_relative_to_document_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared_dir = root / "effects" / "shared"
+            attack_dir = root / "effects" / "attack"
+            shared_dir.mkdir(parents=True)
+            attack_dir.mkdir(parents=True)
+            spark = default_document("shared_spark", "Shared Spark", 1.0)
+            write_document(shared_dir / "spark.vfx.json", spark)
+            parent = default_document("attack_parent", "Attack Parent", 1.0)
+            parent.setdefault("dependencies", {}).setdefault("effects", []).append("../shared/spark.vfx.json")
+            parent_path = attack_dir / "parent.vfx.json"
+            write_document(parent_path, parent)
+            validation = validate_document(parent, root, document_path=parent_path)
+            self.assertTrue(validation["valid"], msg=validation["errors"])
+
 
 class PromotionLockTests(unittest.TestCase):
     def test_stale_promotion_lock_is_recovered(self) -> None:
@@ -448,6 +464,31 @@ class RuntimeConformanceTests(unittest.TestCase):
         self.assertFalse(validation["valid"])
         self.assertIn("INVALID_PROPERTY_TYPE", {item["code"] for item in validation["errors"]})
 
+    def test_non_finite_numeric_property_is_rejected(self) -> None:
+        document = default_document("finite_probe", "Finite Probe", 1.0)
+        layer = make_layer("light", "glow")
+        layer["properties"]["energy"] = float("nan")
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "finite_probe.vfx.json"
+            validation = validate_document(document, Path(tmp), document_path=path)
+        self.assertFalse(validation["valid"])
+        self.assertIn("INVALID_PROPERTY_TYPE", {item["code"] for item in validation["errors"]})
+        with self.assertRaises(ValueError):
+            write_document(path, document)
+
+    def test_out_of_range_property_is_rejected(self) -> None:
+        document = default_document("range_probe", "Range Probe", 1.0)
+        layer = make_layer("light", "glow")
+        layer["properties"]["energy"] = -5.0
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "range_probe.vfx.json"
+            write_document(path, document)
+            validation = validate_document(document, Path(tmp), document_path=path)
+        self.assertFalse(validation["valid"])
+        self.assertIn("INVALID_PROPERTY_TYPE", {item["code"] for item in validation["errors"]})
+
     def test_particle_billboard_enum_is_validated_even_when_emulated(self) -> None:
         document = default_document("billboard_probe", "Billboard Probe", 1.0)
         layer = make_layer("particle", "sparks")
@@ -466,8 +507,10 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         boss = next(item for item in payload["recipes"] if item["id"] == "boss.line_sweep")
         self.assertIn("gameplay.tell_ms", boss["required"])
         self.assertTrue(boss["unsupported_parameters_are_errors"])
-        self.assertEqual(payload["capabilities_version"], 3)
+        self.assertEqual(payload["capabilities_version"], 4)
         self.assertIn("reference_semantics", payload)
+        self.assertIn("field_specs", payload)
+        self.assertIn("one_shot", payload["field_specs"]["layers"]["particle"]["properties"])
         self.assertIn("request_contract", payload)
         self.assertIn("target_policy_bindings", payload)
         self.assertEqual(payload["target_policy_bindings"]["enigma"], "enigma")

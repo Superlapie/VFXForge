@@ -143,7 +143,7 @@ def _rewrite_document_effect_refs(
             for reference in effects:
                 if not isinstance(reference, str) or not reference:
                     continue
-                source = _resolve_effect_source(reference, project_root, project_root)
+                source = _resolve_effect_source(reference, document_dir, project_root)
                 export_path = source_exports.get(str(source.resolve()))
                 rewritten_effects.append(export_path or reference)
             dependencies["effects"] = rewritten_effects
@@ -478,13 +478,12 @@ def _resolve_project_root(source: Path, project_dir: Path | None) -> Path:
     if project_dir is not None:
         return Path(project_dir).resolve()
     start = source.parent.resolve()
-    best = start
     for candidate in [start, *start.parents]:
         if (candidate / "assets").is_dir():
             return candidate
         if (candidate / "effects").is_dir():
-            best = candidate
-    return best
+            return candidate
+    return start
 
 
 def export_document(

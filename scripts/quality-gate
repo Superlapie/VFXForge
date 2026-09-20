@@ -20,37 +20,40 @@ if [[ -n "$GODOT_BIN" ]]; then
   export VFXFORGE_GODOT="$GODOT_BIN"
 fi
 
-echo "[1/11] Python model, CLI, renderer, and service tests"
+echo "[1/12] Python model, CLI, renderer, and service tests"
 python3 -m unittest tests.test_model tests.test_cli tests.test_renderer_export tests.test_service tests.test_service_hardening tests.test_schema_contract tests.test_service_matrix tests.test_service_trust -v
 
-echo "[2/11] User-facing CLI, Godot export, and GUI E2E"
+echo "[2/12] User-facing CLI, Godot export, and GUI E2E"
 python3 -m unittest tests.test_user_e2e -v
 
-echo "[3/11] Batch schema validation"
+echo "[3/12] Batch schema validation"
 python3 -m vfxforge.cli validate "$ROOT/examples" --json > "$QUALITY_DIR/validate.json"
 
-echo "[4/11] Deterministic PNG previews"
+echo "[4/12] Deterministic PNG previews"
 python3 -m vfxforge.cli render-preview "$ROOT/examples" \
   --output "$QUALITY_DIR/previews" --time 0.6 --camera mmo --json > "$QUALITY_DIR/render.json"
 preview_count="$(find "$QUALITY_DIR/previews" -maxdepth 1 -type f -name '*.png' | wc -l)"
 test "$preview_count" -eq 8
 
 if [[ -n "$GODOT_BIN" ]]; then
-  echo "[5/11] Godot editor parse/startup smoke"
+  echo "[5/12] Godot editor parse/startup smoke"
   "$GODOT_BIN" --headless --editor --path "$ROOT" --quit > "$QUALITY_DIR/godot-editor.log" 2>&1
   "$GODOT_BIN" --headless --path "$ROOT" --quit-after 2 > "$QUALITY_DIR/godot-gui-startup.log" 2>&1
-  echo "[6/11] Godot export and clean-project smoke"
+  echo "[6/12] Godot export and clean-project smoke"
   python3 -m vfxforge.cli export "$ROOT/examples" --output "$QUALITY_DIR/exports" --json > "$QUALITY_DIR/export.json"
+  echo "[7/12] Godot runtime behavior probes"
+  python3 -m unittest tests.test_runtime_behavior -v
 else
-  echo "[5/11] Godot editor parse/startup smoke: SKIPPED (Godot 4.x not found)"
-  echo "[6/11] Godot export smoke: SKIPPED (Godot 4.x not found)"
+  echo "[5/12] Godot editor parse/startup smoke: SKIPPED (Godot 4.x not found)"
+  echo "[6/12] Godot export smoke: SKIPPED (Godot 4.x not found)"
+  echo "[7/12] Godot runtime behavior probes: SKIPPED (Godot 4.x not found)"
   python3 -m vfxforge.cli export "$ROOT/examples" --output "$QUALITY_DIR/exports" --no-smoke-test --json > "$QUALITY_DIR/export.json"
 fi
 
 manifest_count="$(find "$QUALITY_DIR/exports" -name 'export_manifest.json' -type f | wc -l)"
 test "$manifest_count" -eq 8
 
-echo "[7/11] JSON Schema validation"
+echo "[8/12] JSON Schema validation"
 python3 - <<'PY'
 from pathlib import Path
 from vfxforge.schema_validate import validate_file
@@ -65,7 +68,7 @@ for path in sorted((root / 'examples' / 'requests').glob('*.vfxrequest.json')):
 print('JSON Schema validation OK')
 PY
 
-echo "[8/11] Default-policy service forge matrix"
+echo "[9/12] Default-policy service forge matrix"
 rm -rf "$QUALITY_DIR/service"
 mkdir -p "$QUALITY_DIR/service"
 python3 -m vfxforge.cli forge --request examples/requests/fire_impact.vfxrequest.json --policy default --workspace "$QUALITY_DIR/service/default" --no-export --json > "$QUALITY_DIR/forge_fire.json"
@@ -103,7 +106,7 @@ assert default_count >= 4, default_count
 print('default recipe matrix OK')
 PY
 
-echo "[9/11] Enigma library production path"
+echo "[10/12] Enigma library production path"
 if [[ -z "$GODOT_BIN" ]]; then
   echo "Enigma library gate FAILED: Godot 4.x is required for host-library production verification." >&2
   exit 1
@@ -136,7 +139,7 @@ for recipe_id, request, _recipe in iter_recipe_requests():
 print('enigma library matrix OK')
 PY
 
-echo "[10/11] Wheel install smoke"
+echo "[11/12] Wheel install smoke"
 printf '%s\n' "${VFXFORGE_REVISION:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}" > "$ROOT/vfxforge/_revision.txt"
 python3 -m pip wheel "$ROOT" -w "$QUALITY_DIR/wheel" --no-deps -q
 WHEEL_PATH=""
@@ -183,7 +186,7 @@ assert revision != 'unknown', revision
 print('installed-wheel enigma library forge OK')
 PY
 
-echo "[11/11] Artifact checks"
+echo "[12/12] Artifact checks"
 test -s "$QUALITY_DIR/validate.json"
 test -s "$QUALITY_DIR/render.json"
 test -s "$QUALITY_DIR/export.json"

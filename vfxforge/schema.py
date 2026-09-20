@@ -122,7 +122,7 @@ LAYER_DEFAULTS: dict[str, dict[str, Any]] = {
             "amount": 24,
             "one_shot": True,
             "lifetime": 1.0,
-            "mesh": "quad",
+            "mesh": "box",
             "mesh_asset": "",
             "emission_shape": "point",
             "size": [0.15, 0.15, 0.15],

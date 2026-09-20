@@ -124,3 +124,19 @@ class RendererExportTests(unittest.TestCase):
             exported = export_document(parent, parent_path, root / "export", run_smoke_test=False)
             self.assertEqual(len(exported["copied_effects"]), 1)
             self.assertTrue((root / "export" / exported["copied_effects"][0]).is_file())
+
+    def test_stable_id_child_can_be_reexported_without_ambiguity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            child = default_document("spark", "Spark", 1.0)
+            write_document(root / "child.vfx.json", child)
+            parent = default_document("parent_effect", "Parent", 1.0)
+            child_layer = make_layer("child_effect", "spark_child")
+            child_layer["properties"]["effect_id"] = "spark"
+            parent["layers"].append(child_layer)
+            parent_path = root / "parent.vfx.json"
+            write_document(parent_path, parent)
+            output = root / "export"
+            export_document(parent, parent_path, output, run_smoke_test=False)
+            export_document(parent, parent_path, output, run_smoke_test=False)
+            self.assertTrue((output / "effect.tscn").is_file())
