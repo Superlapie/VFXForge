@@ -26,7 +26,8 @@ from vfxforge.service.policy import load_policy
 from vfxforge.service.promotion import acquire_promotion_lock, generation_digest, release_promotion_lock
 from vfxforge.service.request import normalize_request
 from vfxforge.service.result import ForgeStatus
-from vfxforge.service.runtime_conformance import RUNTIME_PRODUCTION_LAYER_TYPES, validate_runtime_conformance
+from vfxforge.property_spec import RUNTIME_ENFORCED_RELATION_IDS
+from vfxforge.service.runtime_conformance import RUNTIME_CONTRACT_VERSION, RUNTIME_PRODUCTION_LAYER_TYPES, validate_runtime_conformance
 from vfxforge.service.selector import list_recipes, load_recipe, select_recipe
 from vfxforge.service.semantic import validate_recipe_semantics
 from vfxforge.validation import validate_document
@@ -406,6 +407,42 @@ class RuntimeConformanceTests(unittest.TestCase):
         digest_b = generation_digest(request, recipe, policy, runtime_contract_version=2)
         self.assertNotEqual(digest_a, digest_b)
 
+    def test_runtime_contract_version_seven_enforces_conditional_relations(self) -> None:
+        self.assertEqual(RUNTIME_CONTRACT_VERSION, 7)
+        self.assertIn("flipbook_requires_sprite_texture", RUNTIME_ENFORCED_RELATION_IDS)
+        self.assertIn("custom_mesh_disables_primitive_selector", RUNTIME_ENFORCED_RELATION_IDS)
+        self.assertIn("quad_ignores_size_z", RUNTIME_ENFORCED_RELATION_IDS)
+
+    def test_sparse_custom_mesh_document_passes_runtime_conformance(self) -> None:
+        document = default_document("sparse_mesh_probe", "Sparse Mesh Probe", 1.0)
+        layer = make_layer("mesh_effect", "hero")
+        properties = dict(layer["properties"])
+        properties["mesh_asset"] = "assets/sword.glb"
+        del properties["mesh"]
+        layer["properties"] = properties
+        document["layers"] = [layer]
+        runtime_errors = validate_runtime_conformance(document)
+        self.assertEqual(runtime_errors, [], msg=runtime_errors)
+
+    def test_runtime_conformance_mirrors_document_mesh_particle_quad_relation(self) -> None:
+        document = default_document("quad_size_probe", "Quad Size Probe", 1.0)
+        layer = make_layer("mesh_particle", "particles")
+        layer["properties"]["mesh"] = "quad"
+        layer["properties"]["size"] = [1.0, 1.0, 999.0]
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            document_validation = validate_document(document, Path(tmp))
+        runtime_errors = validate_runtime_conformance(document)
+        self.assertFalse(document_validation["valid"])
+        self.assertIn("INVALID_PROPERTY_RELATION", {item["code"] for item in document_validation["errors"]})
+        self.assertTrue(
+            any(
+                item["code"] == "CONDITIONAL_RUNTIME_PROPERTY" and item["relation_id"] == "quad_ignores_size_z"
+                for item in runtime_errors
+            ),
+            msg=runtime_errors,
+        )
+
     def test_malformed_particle_property_returns_structured_runtime_error(self) -> None:
         request = normalize_request(_read_request("fire_impact.vfxrequest.json"))
         recipe = load_recipe("impact.fire")
@@ -589,7 +626,7 @@ class RuntimeConformanceTests(unittest.TestCase):
         document = default_document("reserved_probe", "Reserved Probe", 1.0)
         document["metadata"] = {"vfxforge_provenance": "export"}
         with tempfile.TemporaryDirectory() as tmp:
-            validation = validate_document(document, Path(tmp))
+            validation = validate_document(document, Path(tmp), document_role="source")
         self.assertFalse(validation["valid"])
         self.assertIn("RESERVED_METADATA_FIELD", {item["code"] for item in validation["errors"]})
 

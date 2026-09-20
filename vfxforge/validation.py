@@ -5,10 +5,20 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from .effect_refs import reference_escapes_project, resolve_effect, resolve_effect_path
-from .model import RESERVED_METADATA_KEYS, coerce_float, finite_number, is_stable_id, numeric_gt, read_document, validate_json_safe
+from .model import (
+    RESERVED_METADATA_KEYS,
+    VFXFORGE_PROVENANCE_KEY,
+    coerce_float,
+    finite_number,
+    is_generated_effect_document,
+    is_stable_id,
+    numeric_gt,
+    read_document,
+    validate_json_safe,
+)
 from .property_spec import (
     LAYER_STRUCT_KEYS,
     ROOT_KEYS,
@@ -453,11 +463,14 @@ def validate_document(
     strict: bool = False,
     policy_ceilings: dict[str, Any] | None = None,
     document_path: str | Path | None = None,
+    document_role: Literal["source", "generated"] | None = None,
 ) -> dict[str, Any]:
     """Return stable structured validation data; this function never raises for bad fields."""
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     root = document if isinstance(document, dict) else {}
+    if document_role is None:
+        document_role = "generated" if is_generated_effect_document(root) else "source"
     project = Path(project_dir).resolve() if project_dir is not None else None
     resolved_document_path = Path(document_path).resolve() if document_path is not None else None
     document_dir = resolved_document_path.parent if resolved_document_path is not None else project
@@ -496,6 +509,8 @@ def validate_document(
     elif isinstance(root.get("metadata"), dict):
         for key in root["metadata"]:
             if key in RESERVED_METADATA_KEYS:
+                if document_role == "generated" and key == VFXFORGE_PROVENANCE_KEY:
+                    continue
                 errors.append(
                     issue(
                         "error",

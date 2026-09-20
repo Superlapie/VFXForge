@@ -388,6 +388,170 @@ PROPERTY_RELATIONS: dict[str, tuple[dict[str, Any], ...]] = {
     ),
 }
 
+RUNTIME_ENFORCED_RELATION_IDS = frozenset({
+    "flipbook_requires_sprite_texture",
+    "custom_mesh_disables_primitive_selector",
+    "custom_mesh_disables_size_scaling",
+    "sphere_uniform_size",
+    "torus_primary_axis_size",
+    "quad_ignores_size_z",
+})
+
+
+@dataclass(frozen=True)
+class PropertyRelationViolation:
+    relation_id: str
+    field: str
+    message: str
+    suggestion: str = ""
+    value: Any = None
+
+
+def collect_layer_property_relation_violations(
+    layer_type: str,
+    properties: dict[str, Any],
+) -> list[PropertyRelationViolation]:
+    violations: list[PropertyRelationViolation] = []
+    if layer_type == "sprite":
+        defaults = LAYER_DEFAULTS["sprite"]["properties"]
+        columns = properties.get("flipbook_columns", defaults["flipbook_columns"])
+        rows = properties.get("flipbook_rows", defaults["flipbook_rows"])
+        frames = properties.get("flipbook_frames", defaults["flipbook_frames"])
+        start_frame = properties.get("flipbook_start_frame", defaults["flipbook_start_frame"])
+        fps = properties.get("flipbook_fps", defaults["flipbook_fps"])
+        if not all(isinstance(item, int) and not isinstance(item, bool) for item in (columns, rows, frames, start_frame)):
+            return violations
+        atlas_capacity = columns * rows
+        if frames > atlas_capacity:
+            violations.append(
+                PropertyRelationViolation(
+                    "flipbook_frames_capacity",
+                    "flipbook_frames",
+                    (
+                        f"flipbook_frames ({frames}) exceeds atlas capacity "
+                        f"({columns} columns x {rows} rows = {atlas_capacity})."
+                    ),
+                    "Reduce flipbook_frames or expand the atlas grid.",
+                    frames,
+                )
+            )
+        if start_frame < 0 or start_frame >= frames:
+            violations.append(
+                PropertyRelationViolation(
+                    "flipbook_start_frame_bounds",
+                    "flipbook_start_frame",
+                    f"flipbook_start_frame ({start_frame}) must satisfy 0 <= start_frame < flipbook_frames ({frames}).",
+                    "Choose a start frame inside the authored atlas.",
+                    start_frame,
+                )
+            )
+        if frames > 1:
+            coerced_fps = coerce_float(fps) if isinstance(fps, (int, float)) and not isinstance(fps, bool) else None
+            if coerced_fps is None or coerced_fps <= 0.0:
+                violations.append(
+                    PropertyRelationViolation(
+                        "flipbook_fps_when_animated",
+                        "flipbook_fps",
+                        "flipbook_fps must be greater than zero when flipbook_frames is greater than one.",
+                        "Set flipbook_fps above zero or disable the flipbook.",
+                        fps,
+                    )
+                )
+        texture = str(properties.get("texture", defaults["texture"]))
+        if frames > 1 and not texture:
+            violations.append(
+                PropertyRelationViolation(
+                    "flipbook_requires_sprite_texture",
+                    "texture",
+                    "Animated flipbooks require properties.texture so the runtime can create a Sprite3D atlas card.",
+                    "Set properties.texture or keep flipbook_frames at 1.",
+                    texture,
+                )
+            )
+        return violations
+
+    if layer_type == "mesh_effect":
+        defaults = LAYER_DEFAULTS["mesh_effect"]["properties"]
+        mesh_asset = str(properties.get("mesh_asset", defaults["mesh_asset"]))
+        mesh_name = str(properties.get("mesh", defaults["mesh"]))
+        if mesh_asset and mesh_name != str(defaults["mesh"]):
+            violations.append(
+                PropertyRelationViolation(
+                    "custom_mesh_disables_primitive_selector",
+                    "mesh",
+                    "mesh is ignored when mesh_asset is set; keep the default primitive selector.",
+                    "Clear mesh_asset or reset mesh to the default value.",
+                    properties.get("mesh", defaults["mesh"]),
+                )
+            )
+        return violations
+
+    if layer_type != "mesh_particle":
+        return violations
+
+    defaults = LAYER_DEFAULTS["mesh_particle"]["properties"]
+    mesh_asset = str(properties.get("mesh_asset", defaults["mesh_asset"]))
+    mesh_name = str(properties.get("mesh", defaults["mesh"]))
+    size = properties.get("size", defaults["size"])
+    default_mesh = str(defaults["mesh"])
+    default_size = defaults["size"]
+
+    if mesh_asset:
+        if mesh_name != default_mesh:
+            violations.append(
+                PropertyRelationViolation(
+                    "custom_mesh_disables_primitive_selector",
+                    "mesh",
+                    "mesh is ignored when mesh_asset is set; keep the default primitive selector.",
+                    "Clear mesh_asset or reset mesh to the default value.",
+                    mesh_name,
+                )
+            )
+        if size != default_size:
+            violations.append(
+                PropertyRelationViolation(
+                    "custom_mesh_disables_size_scaling",
+                    "size",
+                    "size is not applied to imported mesh_asset draw passes at runtime.",
+                    "Clear mesh_asset or reset size to the default vector.",
+                    size,
+                )
+            )
+        return violations
+
+    if mesh_name == "quad":
+        if isinstance(size, list) and len(size) == 3 and size[2] != default_size[2]:
+            violations.append(
+                PropertyRelationViolation(
+                    "quad_ignores_size_z",
+                    "size",
+                    "mesh 'quad' ignores size.z; keep the default Z component.",
+                    "Use size.x and size.y only or choose box/sphere/torus.",
+                    size,
+                )
+            )
+        return violations
+
+    if mesh_name not in {"sphere", "torus"}:
+        return violations
+    if not isinstance(size, list) or len(size) != 3:
+        return violations
+    if not all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in size):
+        return violations
+    if size[0] == size[1] == size[2]:
+        return violations
+    relation_id = "sphere_uniform_size" if mesh_name == "sphere" else "torus_primary_axis_size"
+    violations.append(
+        PropertyRelationViolation(
+            relation_id,
+            "size",
+            f"mesh '{mesh_name}' requires uniform size.x == size.y == size.z for predictable primitive scaling.",
+            "Use equal size components or choose box/quad.",
+            size,
+        )
+    )
+    return violations
+
 
 def describe_property_relations() -> dict[str, list[dict[str, Any]]]:
     return {layer_type: [dict(rule) for rule in rules] for layer_type, rules in PROPERTY_RELATIONS.items()}
@@ -460,122 +624,13 @@ def validate_layer_property_relations(
     path_prefix: str,
     append_error: Callable[[str, str, str, str, Any], None],
 ) -> None:
-    if layer_type == "sprite":
-        defaults = LAYER_DEFAULTS["sprite"]["properties"]
-        columns = properties.get("flipbook_columns", defaults["flipbook_columns"])
-        rows = properties.get("flipbook_rows", defaults["flipbook_rows"])
-        frames = properties.get("flipbook_frames", defaults["flipbook_frames"])
-        start_frame = properties.get("flipbook_start_frame", defaults["flipbook_start_frame"])
-        fps = properties.get("flipbook_fps", defaults["flipbook_fps"])
-        if not all(isinstance(item, int) and not isinstance(item, bool) for item in (columns, rows, frames, start_frame)):
-            return
-        atlas_capacity = columns * rows
-        if frames > atlas_capacity:
-            append_error(
-                "INVALID_PROPERTY_RELATION",
-                f"{path_prefix}.properties.flipbook_frames",
-                (
-                    f"flipbook_frames ({frames}) exceeds atlas capacity "
-                    f"({columns} columns x {rows} rows = {atlas_capacity})."
-                ),
-                "Reduce flipbook_frames or expand the atlas grid.",
-                frames,
-            )
-        if start_frame < 0 or start_frame >= frames:
-            append_error(
-                "INVALID_PROPERTY_RELATION",
-                f"{path_prefix}.properties.flipbook_start_frame",
-                f"flipbook_start_frame ({start_frame}) must satisfy 0 <= start_frame < flipbook_frames ({frames}).",
-                "Choose a start frame inside the authored atlas.",
-                start_frame,
-            )
-        if frames > 1:
-            coerced_fps = coerce_float(fps) if isinstance(fps, (int, float)) and not isinstance(fps, bool) else None
-            if coerced_fps is None or coerced_fps <= 0.0:
-                append_error(
-                    "INVALID_PROPERTY_RELATION",
-                    f"{path_prefix}.properties.flipbook_fps",
-                    "flipbook_fps must be greater than zero when flipbook_frames is greater than one.",
-                    "Set flipbook_fps above zero or disable the flipbook.",
-                    fps,
-                )
-        texture = str(properties.get("texture", defaults["texture"]))
-        if frames > 1 and not texture:
-            append_error(
-                "INVALID_PROPERTY_RELATION",
-                f"{path_prefix}.properties.texture",
-                "Animated flipbooks require properties.texture so the runtime can create a Sprite3D atlas card.",
-                "Set properties.texture or keep flipbook_frames at 1.",
-                texture,
-            )
-        return
-
-    if layer_type == "mesh_effect":
-        defaults = LAYER_DEFAULTS["mesh_effect"]["properties"]
-        mesh_asset = str(properties.get("mesh_asset", defaults["mesh_asset"]))
-        if mesh_asset and str(properties.get("mesh", defaults["mesh"])) != str(defaults["mesh"]):
-            append_error(
-                "INVALID_PROPERTY_RELATION",
-                f"{path_prefix}.properties.mesh",
-                "mesh is ignored when mesh_asset is set; keep the default primitive selector.",
-                "Clear mesh_asset or reset mesh to the default value.",
-                properties.get("mesh"),
-            )
-        return
-
-    if layer_type != "mesh_particle":
-        return
-
-    defaults = LAYER_DEFAULTS["mesh_particle"]["properties"]
-    mesh_asset = str(properties.get("mesh_asset", defaults["mesh_asset"]))
-    mesh_name = str(properties.get("mesh", defaults["mesh"]))
-    size = properties.get("size", defaults["size"])
-    default_mesh = str(defaults["mesh"])
-    default_size = defaults["size"]
-
-    if mesh_asset:
-        if mesh_name != default_mesh:
-            append_error(
-                "INVALID_PROPERTY_RELATION",
-                f"{path_prefix}.properties.mesh",
-                "mesh is ignored when mesh_asset is set; keep the default primitive selector.",
-                "Clear mesh_asset or reset mesh to the default value.",
-                mesh_name,
-            )
-        if size != default_size:
-            append_error(
-                "INVALID_PROPERTY_RELATION",
-                f"{path_prefix}.properties.size",
-                "size is not applied to imported mesh_asset draw passes at runtime.",
-                "Clear mesh_asset or reset size to the default vector.",
-                size,
-            )
-        return
-
-    if mesh_name == "quad":
-        if isinstance(size, list) and len(size) == 3 and size[2] != default_size[2]:
-            append_error(
-                "INVALID_PROPERTY_RELATION",
-                f"{path_prefix}.properties.size",
-                "mesh 'quad' ignores size.z; keep the default Z component.",
-                "Use size.x and size.y only or choose box/sphere/torus.",
-                size,
-            )
-        return
-
-    if mesh_name not in {"sphere", "torus"}:
-        return
-    if not isinstance(size, list) or len(size) != 3:
-        return
-    if not all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in size):
-        return
-    if not (size[0] == size[1] == size[2]):
+    for violation in collect_layer_property_relation_violations(layer_type, properties):
         append_error(
             "INVALID_PROPERTY_RELATION",
-            f"{path_prefix}.properties.size",
-            f"mesh '{mesh_name}' requires uniform size.x == size.y == size.z for predictable primitive scaling.",
-            "Use equal size components or choose box/quad.",
-            size,
+            f"{path_prefix}.properties.{violation.field}",
+            violation.message,
+            violation.suggestion,
+            violation.value,
         )
 
 

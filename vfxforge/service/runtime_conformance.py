@@ -5,12 +5,18 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from ..property_spec import layer_curve_keys, layer_material_keys, layer_property_keys
+from ..property_spec import (
+    RUNTIME_ENFORCED_RELATION_IDS,
+    collect_layer_property_relation_violations,
+    layer_curve_keys,
+    layer_material_keys,
+    layer_property_keys,
+)
 from ..resources import godot_runtime_dir
 from ..schema import BILLBOARD_MODES, BLEND_MODES, COMMON_LAYER, LAYER_DEFAULTS, LAYER_TYPES
 
 
-RUNTIME_CONTRACT_VERSION = 6
+RUNTIME_CONTRACT_VERSION = 7
 
 PropertyTier = str  # implemented | emulated | inert_only | unsupported | host_bound
 
@@ -505,61 +511,16 @@ def validate_runtime_conformance(document: dict[str, Any]) -> list[dict[str, Any
                     ),
                     supported=sorted(PARTICLE_EMISSION_SHAPES),
                 )
-        if layer_type == "sprite":
-            defaults = contract.get("property_defaults", {})
-            frames = properties.get("flipbook_frames", defaults.get("flipbook_frames", 1))
-            texture = str(properties.get("texture", defaults.get("texture", "")))
-            if isinstance(frames, int) and not isinstance(frames, bool) and frames > 1 and not texture:
-                _append_conditional_property_error(
-                    errors,
-                    relation_id="flipbook_requires_sprite_texture",
-                    layer_id=layer_id,
-                    path=f"layers.{layer_id}.properties.texture",
-                    message=(
-                        f"Layer '{layer_id}' uses animated flipbook fields without properties.texture; "
-                        "runtime falls back to a static quad card."
-                    ),
-                )
-        if layer_type == "mesh_effect":
-            defaults = contract.get("property_defaults", {})
-            mesh_asset = str(properties.get("mesh_asset", defaults.get("mesh_asset", "")))
-            if mesh_asset and not _is_default_value(properties.get("mesh"), defaults.get("mesh")):
-                _append_conditional_property_error(
-                    errors,
-                    relation_id="custom_mesh_disables_primitive_selector",
-                    layer_id=layer_id,
-                    path=f"layers.{layer_id}.properties.mesh",
-                    message=(
-                        f"Layer '{layer_id}' property 'mesh' is inactive when mesh_asset is set; "
-                        "runtime uses the imported mesh instead of the primitive selector."
-                    ),
-                )
-        if layer_type == "mesh_particle":
-            defaults = contract.get("property_defaults", {})
-            mesh_asset = str(properties.get("mesh_asset", defaults.get("mesh_asset", "")))
-            if mesh_asset:
-                if not _is_default_value(properties.get("mesh"), defaults.get("mesh")):
-                    _append_conditional_property_error(
-                        errors,
-                        relation_id="custom_mesh_disables_primitive_selector",
-                        layer_id=layer_id,
-                        path=f"layers.{layer_id}.properties.mesh",
-                        message=(
-                            f"Layer '{layer_id}' property 'mesh' is inactive when mesh_asset is set; "
-                            "runtime uses the imported mesh without primitive selector."
-                        ),
-                    )
-                if not _is_default_value(properties.get("size"), defaults.get("size")):
-                    _append_conditional_property_error(
-                        errors,
-                        relation_id="custom_mesh_disables_size_scaling",
-                        layer_id=layer_id,
-                        path=f"layers.{layer_id}.properties.size",
-                        message=(
-                            f"Layer '{layer_id}' property 'size' is inactive when mesh_asset is set; "
-                            "runtime does not scale imported mesh draw passes."
-                        ),
-                    )
+        for violation in collect_layer_property_relation_violations(layer_type, properties):
+            if violation.relation_id not in RUNTIME_ENFORCED_RELATION_IDS:
+                continue
+            _append_conditional_property_error(
+                errors,
+                relation_id=violation.relation_id,
+                layer_id=layer_id,
+                path=f"layers.{layer_id}.properties.{violation.field}",
+                message=violation.message,
+            )
         _validate_property_map(
             errors,
             layer_id=layer_id,
