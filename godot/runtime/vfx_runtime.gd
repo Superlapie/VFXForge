@@ -320,11 +320,15 @@ func _create_card(layer: Dictionary) -> Node:
         var sprite := Sprite3D.new()
         sprite.name = str(layer.get("id", "sprite"))
         sprite.texture = texture
+        var sprite_material := _material(layer)
+        sprite_material.vertex_color_use_as_albedo = true
         sprite.billboard = _resolve_billboard_mode(layer)
-        sprite.material = _material(layer)
+        sprite.material_override = sprite_material
         var size := _vec2(properties.get("size", [1.0, 1.0]))
         var texture_size := texture.get_size()
         sprite.pixel_size = size.x / max(1.0, texture_size.x)
+        var height_scale: float = size.y / maxf(0.001, texture_size.y * sprite.pixel_size)
+        sprite.set_meta("vfx_base_scale", Vector3(1.0, height_scale, 1.0))
         var frame_count: int = max(1, int(properties.get("flipbook_frames", 1)))
         if frame_count > 1:
             var columns: int = max(1, int(properties.get("flipbook_columns", 1)))
@@ -508,7 +512,9 @@ func _update_runtime(time: float) -> void:
             var sprite := node as Sprite3D
             var scale_curve: Variant = layer.get("curves", {}).get("scale", {})
             var sprite_scale: float = _curve_value(scale_curve, normalized, 1.0)
-            sprite.scale = Vector3.ONE * sprite_scale
+            var base_scale_value: Variant = sprite.get_meta("vfx_base_scale", Vector3.ONE)
+            var base_scale: Vector3 = base_scale_value if base_scale_value is Vector3 else Vector3.ONE
+            sprite.scale = base_scale * sprite_scale
             var sprite_alpha: float = _curve_value(layer.get("curves", {}).get("alpha", {}), normalized, 1.0)
             var sprite_color := _color(properties.get("color", layer.get("material", {}).get("tint", "#FFFFFFFF")))
             sprite_color.a *= sprite_alpha
@@ -648,8 +654,14 @@ func _radial_glow_texture(tint: Color) -> GradientTexture2D:
 
 func _load_texture(reference: String) -> Texture2D:
     var path := _asset_path(reference)
-    var resource := load(path)
-    return resource as Texture2D
+    var resource: Variant = load(path)
+    if resource is Texture2D:
+        return resource
+    var image := Image.new()
+    var filesystem_path := ProjectSettings.globalize_path(path)
+    if image.load(filesystem_path) == OK:
+        return ImageTexture.create_from_image(image)
+    return null
 
 
 func _load_mesh(reference: String) -> Mesh:

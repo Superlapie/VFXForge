@@ -76,7 +76,16 @@ def capabilities(policy_id: str | None = None) -> dict[str, Any]:
     recipes = [_recipe_capability(load_recipe(item)) for item in list_recipes()]
     selected = policies[0] if policy_id and policies else None
     return {
-        "capabilities_version": 2,
+        "capabilities_version": 3,
+        "reference_semantics": {
+            "child_effects": {
+                "res://": "project_root",
+                "relative_path": "referencing_document_directory",
+                "stable_id": "unique_search_under_project_root",
+            },
+            "textures": "project_root_relative",
+            "meshes": "project_root_relative",
+        },
         "request_contract": _request_contract(),
         "target_policy_bindings": target_policy_bindings(),
         "layer_support": {

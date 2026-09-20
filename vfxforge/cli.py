@@ -408,12 +408,17 @@ def _commit_asset_ingest(
         asset_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         created_new_asset = True
-    validation = validate_document(proposed, path.parent)
+    validation = validate_document(proposed, path.parent, document_path=path)
     if not validation["valid"]:
         if created_new_asset and target.exists():
             target.unlink(missing_ok=True)
         return validation, []
-    write_document(path, proposed)
+    try:
+        write_document(path, proposed)
+    except Exception:
+        if created_new_asset and target.exists():
+            target.unlink(missing_ok=True)
+        raise
     return validation, [str(path), str(target)]
 
 

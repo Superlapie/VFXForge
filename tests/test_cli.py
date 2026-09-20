@@ -7,6 +7,8 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from unittest.mock import patch
+
 from vfxforge.cli import main
 from vfxforge.model import write_document
 from vfxforge.schema import default_document
@@ -32,27 +34,42 @@ class CLITests(unittest.TestCase):
             self.assertFalse(added["success"])
             self.assertFalse((path.parent / "assets" / "textures" / "spark.png").exists())
 
-    def test_add_texture_does_not_overwrite_existing_collision_asset(self) -> None:
+    def test_add_texture_basename_collision_uses_content_hash_without_overwriting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "effect.vfx.json"
+            source_a = root / "source_a" / "foo.png"
+            source_b = root / "source_b" / "foo.png"
+            source_a.parent.mkdir(parents=True)
+            source_b.parent.mkdir(parents=True)
+            source_a.write_bytes(b"A" * 100)
+            source_b.write_bytes(b"B" * 100)
+            self.assertTrue(run_cli("create", str(path))[1]["success"])
+            code, first = run_cli("add-texture", str(path), "--source", str(source_a))
+            self.assertEqual(code, 0)
+            self.assertTrue(first["success"])
+            first_target = path.parent / "assets" / "textures" / "foo.png"
+            self.assertTrue(first_target.is_file())
+            self.assertEqual(first_target.read_bytes(), b"A" * 100)
+            code, second = run_cli("add-texture", str(path), "--source", str(source_b))
+            self.assertEqual(code, 0)
+            self.assertTrue(second["success"])
+            self.assertEqual(first_target.read_bytes(), b"A" * 100)
+            hashed_targets = list((path.parent / "assets" / "textures").glob("foo_*.png"))
+            self.assertEqual(len(hashed_targets), 1)
+            self.assertEqual(hashed_targets[0].read_bytes(), b"B" * 100)
+
+    def test_add_texture_rolls_back_new_asset_when_document_write_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "effect.vfx.json"
-            asset_dir = path.parent / "assets" / "textures"
-            asset_dir.mkdir(parents=True)
-            existing = asset_dir / "foo_100.png"
-            existing.write_bytes(b"asset-b")
-            first = Path(temporary) / "foo.png"
-            first.write_bytes(b"asset-a" + b"x" * 93)
-            second = Path(temporary) / "foo2.png"
-            second.write_bytes(b"x" * 100)
+            texture = Path(temporary) / "spark.png"
+            texture.write_bytes(b"\x89PNG\r\n\x1a\n")
             self.assertTrue(run_cli("create", str(path))[1]["success"])
-            code, added = run_cli("add-texture", str(path), "--source", str(first))
-            self.assertEqual(code, 0)
-            self.assertTrue(added["success"])
-            self.assertEqual(existing.read_bytes(), b"asset-b")
-            code, collision = run_cli("add-texture", str(path), "--source", str(second))
-            self.assertEqual(code, 0)
-            self.assertTrue(collision["success"])
-            self.assertNotEqual((asset_dir / "foo2.png").read_bytes(), b"asset-b")
-            self.assertEqual(existing.read_bytes(), b"asset-b")
+            with patch("vfxforge.cli.write_document", side_effect=OSError("disk full")):
+                code, result = run_cli("add-texture", str(path), "--source", str(texture))
+            self.assertNotEqual(code, 0)
+            self.assertFalse(result["success"])
+            self.assertFalse(any((path.parent / "assets" / "textures").glob("*.png")))
 
     def test_create_modify_validate_inspect_and_diff(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

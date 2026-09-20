@@ -231,11 +231,63 @@ class ChildEffectSafetyTests(unittest.TestCase):
             document = default_document("inside_effect", "Inside", 1.0)
             document["layers"].append(make_layer("child_effect", "escaped"))
             document["layers"][0]["properties"]["effect_id"] = "../outside.vfx.json"
-            validation = validate_document(document, root)
+            inside_path = root / "inside_effect.vfx.json"
+            write_document(inside_path, document)
+            validation = validate_document(document, root, document_path=inside_path)
             self.assertFalse(validation["valid"])
             self.assertIn("CHILD_EFFECT_OUTSIDE_PROJECT", {item["code"] for item in validation["errors"]})
             if outside.exists():
                 outside.unlink()
+
+    def test_ambiguous_stable_effect_id_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fire = default_document("spark", "Fire Spark", 1.0)
+            ice = default_document("spark", "Ice Spark", 1.0)
+            write_document(root / "effects" / "fire" / "spark.vfx.json", fire)
+            write_document(root / "effects" / "ice" / "spark.vfx.json", ice)
+            parent = default_document("parent_effect", "Parent", 1.0)
+            parent["layers"].append(make_layer("child_effect", "child"))
+            parent["layers"][0]["properties"]["effect_id"] = "spark"
+            parent_path = root / "parent.vfx.json"
+            write_document(parent_path, parent)
+            validation = validate_document(parent, root, document_path=parent_path)
+            self.assertFalse(validation["valid"])
+            self.assertIn("AMBIGUOUS_EFFECT_ID", {item["code"] for item in validation["errors"]})
+
+    def test_nested_relative_child_reference_resolves_across_sibling_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared_dir = root / "effects" / "shared"
+            attack_dir = root / "effects" / "attack"
+            shared_dir.mkdir(parents=True)
+            attack_dir.mkdir(parents=True)
+            spark = default_document("shared_spark", "Shared Spark", 1.0)
+            write_document(shared_dir / "spark.vfx.json", spark)
+            parent = default_document("attack_parent", "Attack Parent", 1.0)
+            parent["layers"].append(make_layer("child_effect", "spark_child"))
+            parent["layers"][0]["properties"]["effect_id"] = "../shared/spark.vfx.json"
+            parent_path = attack_dir / "parent.vfx.json"
+            write_document(parent_path, parent)
+            validation = validate_document(parent, root, document_path=parent_path)
+            self.assertTrue(validation["valid"], msg=validation["errors"])
+
+    def test_res_protocol_child_reference_resolves_from_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared_dir = root / "effects" / "shared"
+            attack_dir = root / "effects" / "attack"
+            shared_dir.mkdir(parents=True)
+            attack_dir.mkdir(parents=True)
+            spark = default_document("shared_spark", "Shared Spark", 1.0)
+            write_document(shared_dir / "spark.vfx.json", spark)
+            parent = default_document("attack_parent", "Attack Parent", 1.0)
+            parent["layers"].append(make_layer("child_effect", "spark_child"))
+            parent["layers"][0]["properties"]["effect_id"] = "res://effects/shared/spark.vfx.json"
+            parent_path = attack_dir / "parent.vfx.json"
+            write_document(parent_path, parent)
+            validation = validate_document(parent, root, document_path=parent_path)
+            self.assertTrue(validation["valid"], msg=validation["errors"])
 
 
 class PromotionLockTests(unittest.TestCase):
@@ -327,7 +379,9 @@ class RuntimeConformanceTests(unittest.TestCase):
                 result = forge(_read_request("fire_impact.vfxrequest.json"), policy_id="default", workspace=tmp, export=False)
         self.assertFalse(result["production_ready"])
         self.assertEqual(result["status"], ForgeStatus.FAILED.value)
-        self.assertTrue(any(item["code"] == "UNSUPPORTED_RUNTIME_PROPERTY" for item in result["errors"]))
+        self.assertTrue(
+            any(item["code"] in {"UNSUPPORTED_RUNTIME_PROPERTY", "INVALID_PROPERTY_TYPE"} for item in result["errors"]),
+        )
 
     def test_plan_rejects_policy_target_mismatch(self) -> None:
         from vfxforge.service.pipeline import plan
@@ -382,6 +436,18 @@ class RuntimeConformanceTests(unittest.TestCase):
         self.assertIsNone(document)
         self.assertTrue(any(item["code"] == "INVALID_GAMEPLAY_ATTACHMENT" for item in errors))
 
+    def test_string_boolean_property_is_rejected(self) -> None:
+        document = default_document("typed_probe", "Typed Probe", 1.0)
+        layer = make_layer("particle", "sparks")
+        layer["properties"]["one_shot"] = "false"
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "typed_probe.vfx.json"
+            write_document(path, document)
+            validation = validate_document(document, Path(tmp), document_path=path)
+        self.assertFalse(validation["valid"])
+        self.assertIn("INVALID_PROPERTY_TYPE", {item["code"] for item in validation["errors"]})
+
     def test_particle_billboard_enum_is_validated_even_when_emulated(self) -> None:
         document = default_document("billboard_probe", "Billboard Probe", 1.0)
         layer = make_layer("particle", "sparks")
@@ -400,7 +466,8 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         boss = next(item for item in payload["recipes"] if item["id"] == "boss.line_sweep")
         self.assertIn("gameplay.tell_ms", boss["required"])
         self.assertTrue(boss["unsupported_parameters_are_errors"])
-        self.assertEqual(payload["capabilities_version"], 2)
+        self.assertEqual(payload["capabilities_version"], 3)
+        self.assertIn("reference_semantics", payload)
         self.assertIn("request_contract", payload)
         self.assertIn("target_policy_bindings", payload)
         self.assertEqual(payload["target_policy_bindings"]["enigma"], "enigma")

@@ -104,3 +104,23 @@ class RendererExportTests(unittest.TestCase):
             exported = export_document(parent, parent_path, output, run_smoke_test=False)
             self.assertEqual(len(exported["copied_effects"]), 2)
             self.assertEqual(len(set(exported["copied_effects"])), 2)
+
+    def test_nested_sibling_child_reference_exports_from_shared_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shared_dir = root / "effects" / "shared"
+            attack_dir = root / "effects" / "attack"
+            shared_dir.mkdir(parents=True)
+            attack_dir.mkdir(parents=True)
+            spark = make_preset("dust_burst")
+            spark["id"] = "shared_spark"
+            write_document(shared_dir / "spark.vfx.json", spark)
+            parent = default_document("attack_parent", "Attack Parent", 1.0)
+            child_layer = make_layer("child_effect", "spark_child")
+            child_layer["properties"]["effect_id"] = "../shared/spark.vfx.json"
+            parent["layers"].append(child_layer)
+            parent_path = attack_dir / "parent.vfx.json"
+            write_document(parent_path, parent)
+            exported = export_document(parent, parent_path, root / "export", run_smoke_test=False)
+            self.assertEqual(len(exported["copied_effects"]), 1)
+            self.assertTrue((root / "export" / exported["copied_effects"][0]).is_file())

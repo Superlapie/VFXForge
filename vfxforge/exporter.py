@@ -13,6 +13,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .effect_refs import resolve_effect, resolve_effect_path
 from .errors import ExportError
 from .model import read_document
 from .resources import godot_runtime_dir, host_smoke_dir
@@ -83,32 +84,15 @@ def _effect_refs(document: dict[str, Any]) -> set[str]:
     return refs
 
 
-def _resolve_effect_source(reference: str, base_dir: Path) -> Path | None:
-    base = base_dir.resolve()
-    raw = base / reference.removeprefix("res://")
-    try:
-        candidate = raw.resolve()
-        candidate.relative_to(base)
-    except ValueError as exc:
-        raise ExportError(f"Child effect dependency escapes the project: {reference}", "EFFECT_OUTSIDE_PROJECT", reference) from exc
-    if candidate.exists() and candidate.is_file():
-        return candidate
-    if candidate.suffix == "":
-        with_suffix = candidate.with_suffix(".vfx.json")
-        if with_suffix.exists() and with_suffix.is_file():
-            return with_suffix
-    for path in sorted(base.rglob("*.vfx.json")):
-        try:
-            resolved = path.resolve()
-            resolved.relative_to(base)
-        except ValueError:
-            continue
-        try:
-            if read_document(resolved).get("id") == reference:
-                return resolved
-        except Exception:
-            continue
-    return None
+def _resolve_effect_source(reference: str, document_dir: Path, project_root: Path) -> Path:
+    result = resolve_effect(reference, document_dir=document_dir, project_root=project_root)
+    if result.error_code == "EFFECT_OUTSIDE_PROJECT":
+        raise ExportError(result.error_message or reference, "EFFECT_OUTSIDE_PROJECT", reference)
+    if result.error_code == "AMBIGUOUS_EFFECT_ID":
+        raise ExportError(result.error_message or reference, "AMBIGUOUS_EFFECT_ID", reference)
+    if result.path is None:
+        raise ExportError(f"Child effect dependency is missing: {reference}", "MISSING_EFFECT", reference)
+    return result.path
 
 
 def _effect_base_name(source: Path) -> str:
@@ -134,6 +118,7 @@ def _effect_export_name(source: Path, project: Path, used: set[str]) -> str:
 def _rewrite_document_effect_refs(
     document: dict[str, Any],
     document_dir: Path,
+    project_root: Path,
     source_exports: dict[str, str],
 ) -> dict[str, Any]:
     rewritten = deepcopy(document)
@@ -146,9 +131,7 @@ def _rewrite_document_effect_refs(
         reference = properties.get("effect_id")
         if not isinstance(reference, str) or not reference:
             continue
-        source = _resolve_effect_source(reference, document_dir)
-        if source is None:
-            continue
+        source = _resolve_effect_source(reference, document_dir, project_root)
         export_path = source_exports.get(str(source.resolve()))
         if export_path:
             properties["effect_id"] = export_path
@@ -160,10 +143,7 @@ def _rewrite_document_effect_refs(
             for reference in effects:
                 if not isinstance(reference, str) or not reference:
                     continue
-                source = _resolve_effect_source(reference, document_dir)
-                if source is None:
-                    rewritten_effects.append(reference)
-                    continue
+                source = _resolve_effect_source(reference, project_root, project_root)
                 export_path = source_exports.get(str(source.resolve()))
                 rewritten_effects.append(export_path or reference)
             dependencies["effects"] = rewritten_effects
@@ -494,6 +474,19 @@ def _replace_directory(staging: Path, destination: Path) -> None:
         shutil.rmtree(backup, ignore_errors=True)
 
 
+def _resolve_project_root(source: Path, project_dir: Path | None) -> Path:
+    if project_dir is not None:
+        return Path(project_dir).resolve()
+    start = source.parent.resolve()
+    best = start
+    for candidate in [start, *start.parents]:
+        if (candidate / "assets").is_dir():
+            return candidate
+        if (candidate / "effects").is_dir():
+            best = candidate
+    return best
+
+
 def export_document(
     document: dict[str, Any],
     source_path: str | Path,
@@ -512,12 +505,13 @@ def export_document(
       library    - nested bundle for host projects without project.godot
     """
     source = Path(source_path).resolve()
-    resolved_project = Path(project_dir).resolve() if project_dir is not None else source.parent
+    resolved_project = _resolve_project_root(source, Path(project_dir).resolve() if project_dir is not None else None)
     validation = validate_document(
         document,
         resolved_project,
         strict=policy_ceilings is not None,
         policy_ceilings=policy_ceilings,
+        document_path=source,
     )
     if not validation["valid"]:
         raise ExportError(
@@ -548,9 +542,7 @@ def export_document(
     _enqueue_effect_refs(document, source_path.parent, pending_effects, seen_pending)
     while pending_effects:
         reference, base_dir = pending_effects.pop(0)
-        effect_source = _resolve_effect_source(reference, base_dir)
-        if effect_source is None:
-            raise ExportError(f"Child effect dependency is missing: {reference}", "MISSING_EFFECT", reference)
+        effect_source = _resolve_effect_source(reference, base_dir, resolved_project)
         source_key = str(effect_source.resolve())
         if source_key in source_exports:
             continue
@@ -593,9 +585,9 @@ def export_document(
     for reference in sorted({item for item in all_documents for item in _mesh_refs(item)}):
         copy_asset(reference, "meshes", mesh_replacements, copied_meshes, "mesh")
 
-    exported_document = _rewrite_document_effect_refs(exported_document, source_path.parent, source_exports)
+    exported_document = _rewrite_document_effect_refs(exported_document, source.parent, resolved_project, source_exports)
     for source_key, (child_document, child_source) in effect_documents.items():
-        rewritten_child = _rewrite_document_effect_refs(child_document, child_source.parent, source_exports)
+        rewritten_child = _rewrite_document_effect_refs(child_document, child_source.parent, resolved_project, source_exports)
         rewritten_child = _replace_refs(_replace_refs(rewritten_child, texture_replacements), mesh_replacements)
         target = destination / source_exports[source_key]
         target.write_text(json.dumps(rewritten_child, indent=2) + "\n", encoding="utf-8")

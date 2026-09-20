@@ -7,8 +7,17 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
+from .effect_refs import reference_escapes_project, resolve_effect, resolve_effect_path
 from .model import finite_number, is_stable_id, read_document
-from .property_spec import LAYER_STRUCT_KEYS, ROOT_KEYS, layer_curve_keys, layer_material_keys, layer_property_keys
+from .property_spec import (
+    LAYER_STRUCT_KEYS,
+    ROOT_KEYS,
+    layer_curve_keys,
+    layer_material_keys,
+    layer_property_keys,
+    validate_layer_material_types,
+    validate_layer_property_types,
+)
 from .schema import BLEND_MODES, BUDGET_PROFILES, EMISSION_SHAPES, LAYER_TYPES, MESH_ASSET_EXTENSIONS
 
 
@@ -278,37 +287,14 @@ def _contained_resolved(project_dir: Path, candidate: Path) -> Path | None:
     return resolved
 
 
-def _reference_escapes_project(reference: str, project_dir: Path) -> bool:
-    raw = project_dir / reference.removeprefix("res://")
-    return _contained_resolved(project_dir, raw) is None
-
-
-def _resolve_effect(reference: str, project_dir: Path) -> Path | None:
-    project = project_dir.resolve()
-    candidate = _contained_resolved(project, project / reference.removeprefix("res://"))
-    if candidate is not None and candidate.exists() and candidate.is_file():
-        return candidate
-    if candidate is not None and candidate.suffix == "":
-        with_suffix = candidate.with_suffix(".vfx.json")
-        contained = _contained_resolved(project, with_suffix)
-        if contained is not None and contained.exists() and contained.is_file():
-            return contained
-    for path in sorted(project.rglob("*.vfx.json")):
-        contained = _contained_resolved(project, path)
-        if contained is None:
-            continue
-        try:
-            document = read_document(contained)
-        except Exception:
-            continue
-        if document.get("id") == reference:
-            return contained
-    return None
-
-
-def detect_dependency_cycles(document: dict[str, Any], project_dir: Path | None) -> list[dict[str, Any]]:
+def detect_dependency_cycles(
+    document: dict[str, Any],
+    project_dir: Path | None,
+    document_path: Path | None = None,
+) -> list[dict[str, Any]]:
     if project_dir is None:
         return []
+    project_root = project_dir.resolve()
     root_id = str(document.get("id", "<missing>"))
     gray: set[str] = {root_id}
     black: set[str] = set()
@@ -316,14 +302,14 @@ def detect_dependency_cycles(document: dict[str, Any], project_dir: Path | None)
     cycles: list[dict[str, Any]] = []
 
     def visit(current: dict[str, Any], current_path: Path | None) -> None:
-        current_dir = current_path.parent if current_path else project_dir
+        current_dir = current_path.parent if current_path else project_root
         for layer in current.get("layers", []):
             if not isinstance(layer, dict):
                 continue
             reference = _effect_reference(layer)
             if not reference:
                 continue
-            child_path = _resolve_effect(reference, current_dir)
+            child_path = resolve_effect_path(reference, document_dir=current_dir, project_root=project_root)
             if child_path is None:
                 continue
             try:
@@ -352,23 +338,30 @@ def detect_dependency_cycles(document: dict[str, Any], project_dir: Path | None)
             gray.remove(child_id)
             black.add(child_id)
 
-    visit(document, None)
+    visit(document, document_path)
     return cycles
 
 
-def _max_child_effect_depth(document: dict[str, Any], project_dir: Path | None, current_depth: int = 0, stack: list[str] | None = None) -> int:
+def _max_child_effect_depth(
+    document: dict[str, Any],
+    project_dir: Path | None,
+    document_path: Path | None = None,
+    current_depth: int = 0,
+    stack: list[str] | None = None,
+) -> int:
     if project_dir is None:
         return current_depth
+    project_root = project_dir.resolve()
     stack = list(stack or [str(document.get("id", "<missing>"))])
     maximum = current_depth
-    current_dir = project_dir
+    current_dir = document_path.parent if document_path else project_root
     for layer in document.get("layers", []):
         if not isinstance(layer, dict):
             continue
         reference = _effect_reference(layer)
         if not reference:
             continue
-        child_path = _resolve_effect(reference, current_dir)
+        child_path = resolve_effect_path(reference, document_dir=current_dir, project_root=project_root)
         if child_path is None:
             continue
         try:
@@ -378,7 +371,10 @@ def _max_child_effect_depth(document: dict[str, Any], project_dir: Path | None, 
         child_id = str(child.get("id", reference))
         if child_id in stack:
             continue
-        maximum = max(maximum, _max_child_effect_depth(child, child_path.parent, current_depth + 1, stack + [child_id]))
+        maximum = max(
+            maximum,
+            _max_child_effect_depth(child, project_root, child_path, current_depth + 1, stack + [child_id]),
+        )
     return maximum
 
 
@@ -444,12 +440,15 @@ def validate_document(
     selected_budget: str | None = None,
     strict: bool = False,
     policy_ceilings: dict[str, Any] | None = None,
+    document_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Return stable structured validation data; this function never raises for bad fields."""
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     root = document if isinstance(document, dict) else {}
     project = Path(project_dir).resolve() if project_dir is not None else None
+    resolved_document_path = Path(document_path).resolve() if document_path is not None else None
+    document_dir = resolved_document_path.parent if resolved_document_path is not None else project
 
     if strict and isinstance(root, dict):
         for key in root:
@@ -528,6 +527,12 @@ def validate_document(
             for curve_name in curves:
                 if curve_name not in allowed_curves:
                     errors.append(issue("error", "UNKNOWN_CURVE", f"{path}.curves.{curve_name}", f"Unsupported curve '{curve_name}' for layer type '{layer_type}'.", value=curve_name))
+
+        def append_type_error(code: str, field_path: str, message: str, suggestion: str, value: Any) -> None:
+            errors.append(issue("error", code, field_path, message, suggestion, value))
+
+        validate_layer_property_types(layer_type, properties, path_prefix=path, append_error=append_type_error)
+        validate_layer_material_types(material, path_prefix=path, append_error=append_type_error)
         if not isinstance(layer.get("name"), str) or not layer.get("name", "").strip():
             warnings.append(issue("warning", "EMPTY_LAYER_NAME", f"{path}.name", "The layer has no display name."))
         if not isinstance(layer.get("enabled"), bool):
@@ -612,8 +617,12 @@ def validate_document(
             for index, reference in enumerate(effect_refs):
                 if not isinstance(reference, str) or not reference:
                     errors.append(issue("error", "INVALID_EFFECT_REFERENCE", f"dependencies.effects[{index}]", "Effect dependencies must be non-empty strings.", value=reference))
-                elif project is not None and _resolve_effect(reference, project) is None:
-                    errors.append(issue("error", "MISSING_EFFECT", f"dependencies.effects[{index}]", f"Referenced child effect does not exist: {reference}", "Create the effect file or correct the stable ID.", reference))
+                elif project is not None and document_dir is not None:
+                    resolved = resolve_effect(reference, document_dir=project, project_root=project)
+                    if resolved.error_code == "AMBIGUOUS_EFFECT_ID":
+                        errors.append(issue("error", "AMBIGUOUS_EFFECT_ID", f"dependencies.effects[{index}]", resolved.error_message or reference, "Use a unique stable ID or an explicit path.", reference))
+                    elif resolved.path is None:
+                        errors.append(issue("error", "MISSING_EFFECT", f"dependencies.effects[{index}]", f"Referenced child effect does not exist: {reference}", "Create the effect file or correct the stable ID.", reference))
         mesh_refs = dependencies.get("meshes", [])
         if not isinstance(mesh_refs, list):
             errors.append(issue("error", "INVALID_MESH_DEPENDENCIES", "dependencies.meshes", "Mesh dependencies must be an array."))
@@ -624,13 +633,17 @@ def validate_document(
         if not isinstance(layer, dict):
             continue
         reference = _effect_reference(layer)
-        if not reference or project is None:
+        if not reference or project is None or document_dir is None:
             continue
-        if _reference_escapes_project(reference, project):
+        if reference_escapes_project(reference, document_dir=document_dir, project_root=project):
             errors.append(issue("error", "CHILD_EFFECT_OUTSIDE_PROJECT", f"layers[{index}].properties.effect_id", f"Child effect reference escapes the project: {reference}", "Use a project-relative path or a stable effect ID.", reference))
-        elif _resolve_effect(reference, project) is None:
+            continue
+        resolved = resolve_effect(reference, document_dir=document_dir, project_root=project)
+        if resolved.error_code == "AMBIGUOUS_EFFECT_ID":
+            errors.append(issue("error", "AMBIGUOUS_EFFECT_ID", f"layers[{index}].properties.effect_id", resolved.error_message or reference, "Use a unique stable ID or an explicit path.", reference))
+        elif resolved.path is None:
             errors.append(issue("error", "MISSING_CHILD_EFFECT", f"layers[{index}].properties.effect_id", f"Child effect does not exist: {reference}", "Create the referenced .vfx.json or correct the stable ID.", reference))
-    errors.extend(detect_dependency_cycles(root, project))
+    errors.extend(detect_dependency_cycles(root, project, resolved_document_path))
 
     metrics = estimate_metrics(root, project)
     budgets = root.get("budgets", {})
@@ -745,7 +758,7 @@ def validate_document(
                 )
             )
         elif max_child_depth > 0 and project is not None:
-            depth = _max_child_effect_depth(root, project)
+            depth = _max_child_effect_depth(root, project, resolved_document_path)
             if depth > max_child_depth:
                 errors.append(
                     issue(
