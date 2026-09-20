@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .effect_refs import reference_escapes_project, resolve_effect, resolve_effect_path
-from .model import RESERVED_METADATA_KEYS, finite_number, is_stable_id, read_document, validate_json_safe
+from .model import RESERVED_METADATA_KEYS, coerce_float, finite_number, is_stable_id, numeric_gt, read_document, validate_json_safe
 from .property_spec import (
     LAYER_STRUCT_KEYS,
     ROOT_KEYS,
@@ -112,8 +112,8 @@ def _validate_curve(value: Any, path: str, errors: list[dict[str, Any]], warning
         if not _number(errors, warnings, point.get("x"), f"{point_path}.x", 0.0, 1.0, True):
             continue
         _number(errors, warnings, point.get("y"), f"{point_path}.y", None, None, True)
-        x = float(point["x"])
-        if x < previous_x:
+        x = coerce_float(point.get("x"))
+        if x is not None and x < previous_x:
             errors.append(
                 issue(
                     "error",
@@ -139,11 +139,12 @@ def _validate_gradient(value: Any, path: str, errors: list[dict[str, Any]]) -> N
             errors.append(issue("error", "INVALID_GRADIENT_STOP", stop_path, "Gradient stops must be objects."))
             continue
         position = stop.get("position")
-        if not finite_number(position) or not 0.0 <= float(position) <= 1.0:
+        coerced_position = coerce_float(position) if finite_number(position) else None
+        if coerced_position is None or not 0.0 <= coerced_position <= 1.0:
             errors.append(issue("error", "INVALID_GRADIENT_POSITION", f"{stop_path}.position", "Stop position must be between 0 and 1.", value=position))
-        elif float(position) < previous:
+        elif coerced_position < previous:
             errors.append(issue("error", "GRADIENT_NOT_SORTED", stop_path, "Gradient stops must be sorted by position."))
-        previous = float(position) if finite_number(position) else previous
+        previous = coerced_position if coerced_position is not None else previous
         color = stop.get("color")
         if not isinstance(color, str) or not HEX_COLOR.fullmatch(color):
             errors.append(
@@ -405,9 +406,11 @@ def estimate_metrics(document: dict[str, Any], project_dir: Path | None = None) 
         if not isinstance(material, dict):
             material = {}
         if layer_type in {"particle", "mesh_particle"}:
-            particles += int(properties.get("amount", 0)) if isinstance(properties.get("amount", 0), int) else 0
+            amount = properties.get("amount", 0)
+            safe_amount = amount if isinstance(amount, int) and not isinstance(amount, bool) else 0
+            particles += safe_amount
             draw_calls += 1
-            triangles += int(properties.get("amount", 0)) * (2 if layer_type == "particle" else 12)
+            triangles += safe_amount * (2 if layer_type == "particle" else 12)
         elif layer_type == "light":
             lights += 1
             draw_calls += 1
@@ -514,7 +517,11 @@ def validate_document(
                 bad_value,
             )
         )
-    _number(errors, warnings, root.get("duration"), "duration", 0.001, 3600.0, True)
+    duration = 0.0
+    duration_ok = _number(errors, warnings, root.get("duration"), "duration", 0.001, 3600.0, True)
+    if duration_ok:
+        coerced_duration = coerce_float(root.get("duration"))
+        duration = coerced_duration if coerced_duration is not None else 0.0
     if not isinstance(root.get("loop"), bool):
         errors.append(issue("error", "INVALID_LOOP", "loop", "loop must be boolean.", value=root.get("loop")))
     if not isinstance(root.get("seed"), int) or isinstance(root.get("seed"), bool):
@@ -526,7 +533,6 @@ def validate_document(
         layers = root["layers"]
 
     layer_ids: set[str] = set()
-    duration = float(root.get("duration", 0.0)) if finite_number(root.get("duration")) else 0.0
     for index, layer in enumerate(layers):
         path = f"layers[{index}]"
         if not isinstance(layer, dict):
@@ -582,11 +588,14 @@ def validate_document(
             warnings.append(issue("warning", "EMPTY_LAYER_NAME", f"{path}.name", "The layer has no display name."))
         if not isinstance(layer.get("enabled"), bool):
             errors.append(issue("error", "INVALID_ENABLED", f"{path}.enabled", "enabled must be boolean.", value=layer.get("enabled")))
-        _number(errors, warnings, layer.get("start"), f"{path}.start", 0.0, 3600.0, True)
+        start_ok = _number(errors, warnings, layer.get("start"), f"{path}.start", 0.0, 3600.0, True)
         layer_duration_ok = _number(errors, warnings, layer.get("duration"), f"{path}.duration", 0.001, 3600.0, True)
-        if layer_duration_ok and finite_number(layer.get("start")) and float(layer["start"]) + float(layer["duration"]) > duration + 1e-6:
-            outside = issue("warning", "LAYER_OUTSIDE_DURATION", path, "The layer ends after the effect duration.", "Increase effect duration or shorten the layer.")
-            (errors if strict else warnings).append(outside)
+        if start_ok and layer_duration_ok:
+            start = coerce_float(layer.get("start"))
+            layer_duration = coerce_float(layer.get("duration"))
+            if start is not None and layer_duration is not None and start + layer_duration > duration + 1e-6:
+                outside = issue("warning", "LAYER_OUTSIDE_DURATION", path, "The layer ends after the effect duration.", "Increase effect duration or shorten the layer.")
+                (errors if strict else warnings).append(outside)
         blend = material.get("blend_mode", "additive")
         if blend not in BLEND_MODES:
             errors.append(issue("error", "INVALID_BLEND_MODE", f"{path}.material.blend_mode", f"Use one of: {', '.join(BLEND_MODES)}.", value=blend))
@@ -641,9 +650,11 @@ def validate_document(
                     errors.append(issue("error", "DUPLICATE_EVENT_ID", f"{event_path}.id", f"Event ID '{event_id}' is duplicated."))
                 else:
                     event_ids.add(event_id)
-                if _number(errors, warnings, event.get("time"), f"{event_path}.time", 0.0, 3600.0, True) and finite_number(event.get("time")) and float(event["time"]) > duration:
-                    outside_event = issue("warning", "EVENT_OUTSIDE_DURATION", event_path, "The event occurs after the effect duration.")
-                    (errors if strict else warnings).append(outside_event)
+                if _number(errors, warnings, event.get("time"), f"{event_path}.time", 0.0, 3600.0, True):
+                    event_time = coerce_float(event.get("time"))
+                    if event_time is not None and event_time > duration:
+                        outside_event = issue("warning", "EVENT_OUTSIDE_DURATION", event_path, "The event occurs after the effect duration.")
+                        (errors if strict else warnings).append(outside_event)
 
     dependencies = root.get("dependencies", {})
     if not isinstance(dependencies, dict):
@@ -728,7 +739,7 @@ def validate_document(
         budget_target.append(issue("warning" if not strict else "error", "LAYER_BUDGET_EXCEEDED", "layers", f"Layer count ({metrics['layer_count']}) exceeds {profile_name} budget ({int(profile['max_layers'])})."))
     if policy_ceilings and profile.get("max_transparent_layers") and metrics.get("overdraw_layers", 0) > profile["max_transparent_layers"]:
         budget_target.append(issue("warning" if not strict else "error", "TRANSPARENT_LAYER_BUDGET_EXCEEDED", "layers", f"Transparent layers ({metrics['overdraw_layers']}) exceed policy limit ({profile['max_transparent_layers']})."))
-    if policy_ceilings and duration > float(profile.get("max_duration_sec", 30.0)):
+    if policy_ceilings and duration_ok and numeric_gt(duration, float(profile.get("max_duration_sec", 30.0))):
         budget_target.append(issue("warning" if not strict else "error", "DURATION_POLICY_EXCEEDED", "duration", f"Effect duration ({duration}) exceeds policy maximum ({profile['max_duration_sec']})."))
     allowed_layer_types = profile.get("allowed_layer_types") if policy_ceilings else None
     if strict and allowed_layer_types:
@@ -746,11 +757,15 @@ def validate_document(
             properties = layer.get("properties", {})
             if layer.get("type") == "trail" and isinstance(properties, dict):
                 segments = properties.get("segments", properties.get("segment_count"))
-                if finite_number(segments) and float(segments) > profile["max_trail_segments"]:
+                if isinstance(segments, int) and not isinstance(segments, bool) and segments > profile["max_trail_segments"]:
+                    errors.append(issue("error", "TRAIL_SEGMENT_LIMIT", f"layers[{index}].properties.segments", f"Trail segments exceed policy limit ({profile['max_trail_segments']}).", value=segments))
+                elif numeric_gt(segments, float(profile["max_trail_segments"])):
                     errors.append(issue("error", "TRAIL_SEGMENT_LIMIT", f"layers[{index}].properties.segments", f"Trail segments exceed policy limit ({profile['max_trail_segments']}).", value=segments))
             if layer.get("type") == "beam" and isinstance(properties, dict):
                 segments = properties.get("segments", properties.get("segment_count"))
-                if finite_number(segments) and float(segments) > profile["max_beam_segments"]:
+                if isinstance(segments, int) and not isinstance(segments, bool) and segments > profile["max_beam_segments"]:
+                    errors.append(issue("error", "BEAM_SEGMENT_LIMIT", f"layers[{index}].properties.segments", f"Beam segments exceed policy limit ({profile['max_beam_segments']}).", value=segments))
+                elif numeric_gt(segments, float(profile["max_beam_segments"])):
                     errors.append(issue("error", "BEAM_SEGMENT_LIMIT", f"layers[{index}].properties.segments", f"Beam segments exceed policy limit ({profile['max_beam_segments']}).", value=segments))
         max_texture_dimension = int(profile.get("max_texture_dimension", 0) or 0)
         texture_refs: list[tuple[str, Any]] = []

@@ -530,6 +530,16 @@ class RuntimeConformanceTests(unittest.TestCase):
         self.assertFalse(validation["valid"])
         self.assertIn("INVALID_PROPERTY_RELATION", {item["code"] for item in validation["errors"]})
 
+    def test_sprite_flipbook_requires_properties_texture(self) -> None:
+        document = default_document("sprite_flipbook_probe", "Sprite Flipbook Probe", 1.0)
+        layer = make_layer("sprite", "atlas")
+        layer["properties"]["flipbook_frames"] = 4
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            validation = validate_document(document, Path(tmp))
+        self.assertFalse(validation["valid"])
+        self.assertIn("INVALID_PROPERTY_RELATION", {item["code"] for item in validation["errors"]})
+
     def test_mesh_particle_mesh_sphere_passes_runtime_conformance(self) -> None:
         document = default_document("mesh_particle_sphere", "Mesh Particle Sphere", 1.0)
         layer = make_layer("mesh_particle", "particles")
@@ -548,6 +558,24 @@ class RuntimeConformanceTests(unittest.TestCase):
             validation = validate_document(document, Path(tmp), document_path=path)
         self.assertFalse(validation["valid"])
         self.assertIn("PROPERTY_OUT_OF_RANGE", {item["code"] for item in validation["errors"]})
+
+    def test_huge_duration_does_not_raise_validate_document(self) -> None:
+        document = default_document("duration_probe", "Duration Probe", 1.0)
+        document["duration"] = 10**1000
+        with tempfile.TemporaryDirectory() as tmp:
+            validation = validate_document(document, Path(tmp))
+        self.assertFalse(validation["valid"])
+        self.assertIn("NUMBER_TOO_LARGE", {item["code"] for item in validation["errors"]})
+
+    def test_malformed_particle_amount_does_not_raise_validate_document(self) -> None:
+        document = default_document("amount_probe", "Amount Probe", 1.0)
+        layer = make_layer("particle", "sparks")
+        layer["properties"]["amount"] = "banana"
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            validation = validate_document(document, Path(tmp))
+        self.assertFalse(validation["valid"])
+        self.assertIn("INVALID_PROPERTY_TYPE", {item["code"] for item in validation["errors"]})
 
     def test_invalid_metadata_object_is_rejected(self) -> None:
         document = default_document("metadata_probe", "Metadata Probe", 1.0)
@@ -607,6 +635,7 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         self.assertIn("reference_semantics", payload)
         self.assertIn("field_specs", payload)
         self.assertIn("property_relations", payload)
+        self.assertIn("flipbook_requires_sprite_texture", {item["id"] for item in payload["property_relations"]["sprite"]})
         self.assertIn("flipbook_frames_capacity", {item["id"] for item in payload["property_relations"]["sprite"]})
         self.assertIn("one_shot", payload["field_specs"]["layers"]["particle"]["properties"])
         self.assertIn("request_contract", payload)

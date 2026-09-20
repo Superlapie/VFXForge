@@ -337,3 +337,51 @@ def finite_number(value: Any) -> bool:
     if isinstance(value, int):
         return True
     return isinstance(value, float) and math.isfinite(value)
+
+
+def coerce_float(value: Any, default: float | None = None) -> float | None:
+    """Convert a validated numeric value to float without raising on huge integers."""
+    if not finite_number(value):
+        return default
+    if isinstance(value, int):
+        try:
+            return float(value)
+        except OverflowError:
+            return default
+    return float(value)
+
+
+def numeric_gt(left: Any, right: float) -> bool | None:
+    if not finite_number(left):
+        return None
+    if isinstance(left, int) and not isinstance(left, bool):
+        if isinstance(right, float) and right.is_integer():
+            return left > int(right)
+        coerced = coerce_float(left)
+        return coerced is not None and coerced > right
+    coerced = coerce_float(left)
+    return coerced is not None and coerced > right
+
+
+def numeric_ge(left: Any, right: float) -> bool | None:
+    if not finite_number(left):
+        return None
+    if isinstance(left, int) and not isinstance(left, bool):
+        if isinstance(right, float) and right.is_integer():
+            return left >= int(right)
+        coerced = coerce_float(left)
+        return coerced is not None and coerced >= right
+    coerced = coerce_float(left)
+    return coerced is not None and coerced >= right
+
+
+def numeric_le(left: Any, right: float) -> bool | None:
+    if not finite_number(left):
+        return None
+    if isinstance(left, int) and not isinstance(left, bool):
+        if isinstance(right, float) and right.is_integer():
+            return left <= int(right)
+        coerced = coerce_float(left)
+        return coerced is not None and coerced <= right
+    coerced = coerce_float(left)
+    return coerced is not None and coerced <= right

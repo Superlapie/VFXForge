@@ -505,11 +505,8 @@ def export_document(
     """
     source = Path(source_path).resolve()
     resolved_project = _resolve_project_root(source, Path(project_dir).resolve() if project_dir is not None else None)
-    export_document_payload = deepcopy(document)
-    if not isinstance(export_document_payload.get("metadata"), dict):
-        export_document_payload["metadata"] = {}
     validation = validate_document(
-        export_document_payload,
+        document,
         resolved_project,
         strict=policy_ceilings is not None,
         policy_ceilings=policy_ceilings,
@@ -521,7 +518,6 @@ def export_document(
             "EXPORT_VALIDATION_FAILED",
             str(source),
         )
-    document = export_document_payload
     final_destination = Path(output).resolve()
     staging = final_destination.parent / f".{final_destination.name}.export-staging-{uuid.uuid4().hex[:8]}"
     if staging.exists():

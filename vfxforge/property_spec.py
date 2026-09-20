@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .model import coerce_float
 from .schema import (
     BILLBOARD_MODES,
     BLEND_MODES,
@@ -331,6 +332,22 @@ PROPERTY_RELATIONS: dict[str, tuple[dict[str, Any], ...]] = {
             "constraint": "flipbook_fps > 0 when flipbook_frames > 1",
             "fields": ["flipbook_fps", "flipbook_frames"],
         },
+        {
+            "id": "flipbook_requires_sprite_texture",
+            "when": "flipbook_frames > 1",
+            "constraint": "properties.texture != ''",
+            "fields": ["texture", "flipbook_frames"],
+            "runtime_note": "Flipbook playback requires a Sprite3D created from properties.texture.",
+        },
+    ),
+    "mesh_effect": (
+        {
+            "id": "custom_mesh_disables_primitive_selector",
+            "when": "mesh_asset != ''",
+            "constraint": "mesh must remain the default primitive selector value",
+            "fields": ["mesh_asset", "mesh"],
+            "runtime_note": "Imported mesh_asset replaces the primitive mesh; mesh is ignored.",
+        },
     ),
     "mesh_particle": (
         {
@@ -360,6 +377,13 @@ PROPERTY_RELATIONS: dict[str, tuple[dict[str, Any], ...]] = {
             "constraint": "size.x == size.y == size.z",
             "fields": ["mesh", "size"],
             "runtime_note": "Torus primitive radii derive from size.x only; keep size uniform.",
+        },
+        {
+            "id": "quad_ignores_size_z",
+            "when": "mesh == 'quad' and mesh_asset == ''",
+            "constraint": "size.z must remain the default value",
+            "fields": ["mesh", "size"],
+            "runtime_note": "Quad primitive draw pass uses size.x and size.y only.",
         },
     ),
 }
@@ -465,13 +489,37 @@ def validate_layer_property_relations(
                 "Choose a start frame inside the authored atlas.",
                 start_frame,
             )
-        if frames > 1 and (not isinstance(fps, (int, float)) or isinstance(fps, bool) or float(fps) <= 0.0):
+        if frames > 1:
+            coerced_fps = coerce_float(fps) if isinstance(fps, (int, float)) and not isinstance(fps, bool) else None
+            if coerced_fps is None or coerced_fps <= 0.0:
+                append_error(
+                    "INVALID_PROPERTY_RELATION",
+                    f"{path_prefix}.properties.flipbook_fps",
+                    "flipbook_fps must be greater than zero when flipbook_frames is greater than one.",
+                    "Set flipbook_fps above zero or disable the flipbook.",
+                    fps,
+                )
+        texture = str(properties.get("texture", defaults["texture"]))
+        if frames > 1 and not texture:
             append_error(
                 "INVALID_PROPERTY_RELATION",
-                f"{path_prefix}.properties.flipbook_fps",
-                "flipbook_fps must be greater than zero when flipbook_frames is greater than one.",
-                "Set flipbook_fps above zero or disable the flipbook.",
-                fps,
+                f"{path_prefix}.properties.texture",
+                "Animated flipbooks require properties.texture so the runtime can create a Sprite3D atlas card.",
+                "Set properties.texture or keep flipbook_frames at 1.",
+                texture,
+            )
+        return
+
+    if layer_type == "mesh_effect":
+        defaults = LAYER_DEFAULTS["mesh_effect"]["properties"]
+        mesh_asset = str(properties.get("mesh_asset", defaults["mesh_asset"]))
+        if mesh_asset and str(properties.get("mesh", defaults["mesh"])) != str(defaults["mesh"]):
+            append_error(
+                "INVALID_PROPERTY_RELATION",
+                f"{path_prefix}.properties.mesh",
+                "mesh is ignored when mesh_asset is set; keep the default primitive selector.",
+                "Clear mesh_asset or reset mesh to the default value.",
+                properties.get("mesh"),
             )
         return
 
@@ -500,6 +548,17 @@ def validate_layer_property_relations(
                 f"{path_prefix}.properties.size",
                 "size is not applied to imported mesh_asset draw passes at runtime.",
                 "Clear mesh_asset or reset size to the default vector.",
+                size,
+            )
+        return
+
+    if mesh_name == "quad":
+        if isinstance(size, list) and len(size) == 3 and size[2] != default_size[2]:
+            append_error(
+                "INVALID_PROPERTY_RELATION",
+                f"{path_prefix}.properties.size",
+                "mesh 'quad' ignores size.z; keep the default Z component.",
+                "Use size.x and size.y only or choose box/sphere/torus.",
                 size,
             )
         return

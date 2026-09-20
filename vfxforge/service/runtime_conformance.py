@@ -219,6 +219,7 @@ def _append_property_error(
     message: str,
     tier: PropertyTier | None = None,
     supported: list[str] | None = None,
+    relation_id: str | None = None,
 ) -> None:
     item: dict[str, Any] = {
         "code": code,
@@ -230,7 +231,27 @@ def _append_property_error(
         item["tier"] = tier
     if supported is not None:
         item["supported"] = supported
+    if relation_id is not None:
+        item["relation_id"] = relation_id
     errors.append(item)
+
+
+def _append_conditional_property_error(
+    errors: list[dict[str, Any]],
+    *,
+    relation_id: str,
+    layer_id: str,
+    path: str,
+    message: str,
+) -> None:
+    _append_property_error(
+        errors,
+        code="CONDITIONAL_RUNTIME_PROPERTY",
+        layer_id=layer_id,
+        path=path,
+        message=message,
+        relation_id=relation_id,
+    )
 
 
 def _validate_enum_field(
@@ -484,23 +505,61 @@ def validate_runtime_conformance(document: dict[str, Any]) -> list[dict[str, Any
                     ),
                     supported=sorted(PARTICLE_EMISSION_SHAPES),
                 )
+        if layer_type == "sprite":
+            defaults = contract.get("property_defaults", {})
+            frames = properties.get("flipbook_frames", defaults.get("flipbook_frames", 1))
+            texture = str(properties.get("texture", defaults.get("texture", "")))
+            if isinstance(frames, int) and not isinstance(frames, bool) and frames > 1 and not texture:
+                _append_conditional_property_error(
+                    errors,
+                    relation_id="flipbook_requires_sprite_texture",
+                    layer_id=layer_id,
+                    path=f"layers.{layer_id}.properties.texture",
+                    message=(
+                        f"Layer '{layer_id}' uses animated flipbook fields without properties.texture; "
+                        "runtime falls back to a static quad card."
+                    ),
+                )
+        if layer_type == "mesh_effect":
+            defaults = contract.get("property_defaults", {})
+            mesh_asset = str(properties.get("mesh_asset", defaults.get("mesh_asset", "")))
+            if mesh_asset and not _is_default_value(properties.get("mesh"), defaults.get("mesh")):
+                _append_conditional_property_error(
+                    errors,
+                    relation_id="custom_mesh_disables_primitive_selector",
+                    layer_id=layer_id,
+                    path=f"layers.{layer_id}.properties.mesh",
+                    message=(
+                        f"Layer '{layer_id}' property 'mesh' is inactive when mesh_asset is set; "
+                        "runtime uses the imported mesh instead of the primitive selector."
+                    ),
+                )
         if layer_type == "mesh_particle":
             defaults = contract.get("property_defaults", {})
             mesh_asset = str(properties.get("mesh_asset", defaults.get("mesh_asset", "")))
             if mesh_asset:
-                for key in ("mesh", "size"):
-                    if key in properties and not _is_default_value(properties.get(key), defaults.get(key)):
-                        _append_property_error(
-                            errors,
-                            code="UNSUPPORTED_RUNTIME_PROPERTY",
-                            layer_id=layer_id,
-                            path=f"layers.{layer_id}.properties.{key}",
-                            message=(
-                                f"Layer '{layer_id}' property '{key}' is inactive when mesh_asset is set; "
-                                "runtime uses the imported mesh without primitive selector or size scaling."
-                            ),
-                            tier="conditional",
-                        )
+                if not _is_default_value(properties.get("mesh"), defaults.get("mesh")):
+                    _append_conditional_property_error(
+                        errors,
+                        relation_id="custom_mesh_disables_primitive_selector",
+                        layer_id=layer_id,
+                        path=f"layers.{layer_id}.properties.mesh",
+                        message=(
+                            f"Layer '{layer_id}' property 'mesh' is inactive when mesh_asset is set; "
+                            "runtime uses the imported mesh without primitive selector."
+                        ),
+                    )
+                if not _is_default_value(properties.get("size"), defaults.get("size")):
+                    _append_conditional_property_error(
+                        errors,
+                        relation_id="custom_mesh_disables_size_scaling",
+                        layer_id=layer_id,
+                        path=f"layers.{layer_id}.properties.size",
+                        message=(
+                            f"Layer '{layer_id}' property 'size' is inactive when mesh_asset is set; "
+                            "runtime does not scale imported mesh draw passes."
+                        ),
+                    )
         _validate_property_map(
             errors,
             layer_id=layer_id,

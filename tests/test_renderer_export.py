@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from vfxforge.effect_refs import resolve_effect
+from vfxforge.errors import ExportError
 from vfxforge.exporter import export_document
 from vfxforge.model import write_document
 from vfxforge.presets import make_preset
@@ -158,7 +159,7 @@ class RendererExportTests(unittest.TestCase):
             self.assertIsNone(resolved.error_code)
             self.assertEqual(resolved.path, source_path.resolve())
 
-    def test_export_stamps_provenance_when_source_metadata_is_malformed(self) -> None:
+    def test_export_rejects_malformed_source_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = default_document("fireball", "Fireball", 1.0)
@@ -167,10 +168,6 @@ class RendererExportTests(unittest.TestCase):
             write_document(source_path, source)
             generated_dir = root / "generated"
             generated_dir.mkdir()
-            export_document(source, source_path, generated_dir, run_smoke_test=False)
-            exported_doc = json.loads((generated_dir / "document.vfx.json").read_text(encoding="utf-8"))
-            self.assertIsInstance(exported_doc["metadata"], dict)
-            self.assertEqual(exported_doc["metadata"]["vfxforge_provenance"], "export")
-            resolved = resolve_effect("fireball", document_dir=root, project_root=root)
-            self.assertIsNone(resolved.error_code)
-            self.assertEqual(resolved.path, source_path.resolve())
+            with self.assertRaises(ExportError) as context:
+                export_document(source, source_path, generated_dir, run_smoke_test=False)
+            self.assertEqual(context.exception.code, "EXPORT_VALIDATION_FAILED")
