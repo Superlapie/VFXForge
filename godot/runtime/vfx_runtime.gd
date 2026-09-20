@@ -452,7 +452,7 @@ func _create_mesh_effect(layer: Dictionary) -> MeshInstance3D:
         mesh_instance.mesh = box
     elif custom_mesh == null and mesh_name == "quad":
         var quad := QuadMesh.new()
-        quad.size = Vector2(authored_size.x, authored_size.y)
+        quad.size = Vector2.ONE
         mesh_instance.mesh = quad
     elif custom_mesh == null and mesh_name == "torus":
         var torus := TorusMesh.new()

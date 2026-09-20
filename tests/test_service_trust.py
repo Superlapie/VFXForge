@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vfxforge import resources
+from vfxforge.effect_refs import resolve_effect
 from vfxforge.errors import RecipeBindingError
 from vfxforge.exporter import export_document
 from vfxforge.model import write_document
@@ -305,6 +306,18 @@ class ChildEffectSafetyTests(unittest.TestCase):
             validation = validate_document(parent, root, document_path=parent_path)
             self.assertTrue(validation["valid"], msg=validation["errors"])
 
+    def test_production_directory_source_remains_eligible_for_stable_id_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            production_dir = root / "effects" / "production"
+            production_dir.mkdir(parents=True)
+            spark = default_document("spark", "Production Spark", 1.0)
+            spark_path = production_dir / "spark.vfx.json"
+            write_document(spark_path, spark)
+            resolved = resolve_effect("spark", document_dir=root, project_root=root)
+            self.assertIsNone(resolved.error_code)
+            self.assertEqual(resolved.path, spark_path.resolve())
+
 
 class PromotionLockTests(unittest.TestCase):
     def test_stale_promotion_lock_is_recovered(self) -> None:
@@ -396,7 +409,11 @@ class RuntimeConformanceTests(unittest.TestCase):
         self.assertFalse(result["production_ready"])
         self.assertEqual(result["status"], ForgeStatus.FAILED.value)
         self.assertTrue(
-            any(item["code"] in {"UNSUPPORTED_RUNTIME_PROPERTY", "INVALID_PROPERTY_TYPE"} for item in result["errors"]),
+            any(
+                item["code"]
+                in {"UNSUPPORTED_RUNTIME_PROPERTY", "INVALID_PROPERTY_TYPE", "NON_FINITE_PROPERTY"}
+                for item in result["errors"]
+            ),
         )
 
     def test_plan_rejects_policy_target_mismatch(self) -> None:
@@ -473,7 +490,7 @@ class RuntimeConformanceTests(unittest.TestCase):
             path = Path(tmp) / "finite_probe.vfx.json"
             validation = validate_document(document, Path(tmp), document_path=path)
         self.assertFalse(validation["valid"])
-        self.assertIn("INVALID_PROPERTY_TYPE", {item["code"] for item in validation["errors"]})
+        self.assertIn("NON_FINITE_PROPERTY", {item["code"] for item in validation["errors"]})
         with self.assertRaises(ValueError):
             write_document(path, document)
 
@@ -487,7 +504,30 @@ class RuntimeConformanceTests(unittest.TestCase):
             write_document(path, document)
             validation = validate_document(document, Path(tmp), document_path=path)
         self.assertFalse(validation["valid"])
-        self.assertIn("INVALID_PROPERTY_TYPE", {item["code"] for item in validation["errors"]})
+        self.assertIn("PROPERTY_OUT_OF_RANGE", {item["code"] for item in validation["errors"]})
+
+    def test_flipbook_relation_constraints_are_rejected(self) -> None:
+        document = default_document("flipbook_relation_probe", "Flipbook Relation Probe", 1.0)
+        layer = make_layer("sprite", "atlas")
+        layer["properties"]["flipbook_columns"] = 1
+        layer["properties"]["flipbook_rows"] = 1
+        layer["properties"]["flipbook_frames"] = 100
+        layer["properties"]["flipbook_start_frame"] = 80
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flipbook_relation_probe.vfx.json"
+            write_document(path, document)
+            validation = validate_document(document, Path(tmp), document_path=path)
+        self.assertFalse(validation["valid"])
+        self.assertIn("INVALID_PROPERTY_RELATION", {item["code"] for item in validation["errors"]})
+
+    def test_mesh_particle_mesh_sphere_passes_runtime_conformance(self) -> None:
+        document = default_document("mesh_particle_sphere", "Mesh Particle Sphere", 1.0)
+        layer = make_layer("mesh_particle", "particles")
+        layer["properties"]["mesh"] = "sphere"
+        document["layers"] = [layer]
+        runtime_errors = validate_runtime_conformance(document)
+        self.assertEqual(runtime_errors, [], msg=runtime_errors)
 
     def test_particle_billboard_enum_is_validated_even_when_emulated(self) -> None:
         document = default_document("billboard_probe", "Billboard Probe", 1.0)
@@ -507,7 +547,7 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         boss = next(item for item in payload["recipes"] if item["id"] == "boss.line_sweep")
         self.assertIn("gameplay.tell_ms", boss["required"])
         self.assertTrue(boss["unsupported_parameters_are_errors"])
-        self.assertEqual(payload["capabilities_version"], 4)
+        self.assertEqual(payload["capabilities_version"], 5)
         self.assertIn("reference_semantics", payload)
         self.assertIn("field_specs", payload)
         self.assertIn("one_shot", payload["field_specs"]["layers"]["particle"]["properties"])

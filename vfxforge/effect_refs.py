@@ -6,10 +6,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .model import read_document
+from .model import is_generated_effect_document, read_document
 
 
-EXPORT_CONTAINER_NAMES = frozenset({"export", "exports", "build", "dist", "production"})
 EXPORT_EFFECT_NAME = re.compile(r"^.+_[0-9a-f]{8}(?:_\d+)?\.vfx\.json$")
 
 
@@ -30,17 +29,29 @@ def _contained_resolved(project_root: Path, candidate: Path) -> Path | None:
     return resolved
 
 
-def is_source_effect_document(path: Path, project_root: Path) -> bool:
+def is_source_effect_document(
+    path: Path,
+    project_root: Path,
+    *,
+    document: dict | None = None,
+) -> bool:
+    """Return whether a document may participate in stable-ID source discovery."""
     contained = _contained_resolved(project_root, path)
     if contained is None:
         return False
     relative = contained.relative_to(project_root.resolve())
     for part in relative.parts[:-1]:
-        if part in EXPORT_CONTAINER_NAMES:
-            return False
         if part.startswith(".") and "export-staging" in part:
             return False
     if EXPORT_EFFECT_NAME.match(relative.name):
+        return False
+    payload = document
+    if payload is None:
+        try:
+            payload = read_document(contained)
+        except Exception:
+            return True
+    if is_generated_effect_document(payload):
         return False
     return True
 
@@ -89,14 +100,16 @@ def _resolve_path_candidate(reference: str, *, document_dir: Path, project_root:
 def _resolve_stable_id(reference: str, project_root: Path) -> EffectResolveResult:
     matches: list[Path] = []
     for path in sorted(project_root.rglob("*.vfx.json")):
-        if not is_source_effect_document(path, project_root):
-            continue
         contained = _contained_resolved(project_root, path)
         if contained is None:
             continue
         try:
             document = read_document(contained)
         except Exception:
+            continue
+        if is_generated_effect_document(document):
+            continue
+        if not is_source_effect_document(path, project_root, document=document):
             continue
         if document.get("id") == reference:
             matches.append(contained)

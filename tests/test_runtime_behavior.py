@@ -77,7 +77,8 @@ func _initialize() -> void:
     quit(0)
 """
 
-MESH_EFFECT_PROBE = """extends SceneTree
+def mesh_effect_probe(layer_id: str, expected_class: str, size: tuple[float, float, float]) -> str:
+    return f"""extends SceneTree
 
 func _fail(message: String) -> void:
     push_error(message)
@@ -92,17 +93,22 @@ func _initialize() -> void:
     root.add_child(instance)
     await process_frame
     await process_frame
-    var mesh_node := instance.get_node_or_null("mesh_probe") as MeshInstance3D
+    var mesh_node := instance.get_node_or_null("{layer_id}") as MeshInstance3D
     if mesh_node == null or mesh_node.mesh == null:
-        _fail("Expected mesh_effect node")
+        _fail("Expected mesh_effect node '{layer_id}'")
         return
-    if not mesh_node.mesh is BoxMesh:
-        _fail("Expected mesh_effect to instantiate BoxMesh for mesh=box")
+    if not mesh_node.mesh is {expected_class}:
+        _fail("Expected mesh_effect to instantiate {expected_class}, got " + str(mesh_node.mesh))
+        return
+    if abs(mesh_node.scale.x - {size[0]}) > 0.05 or abs(mesh_node.scale.y - {size[1]}) > 0.05 or abs(mesh_node.scale.z - {size[2]}) > 0.05:
+        _fail("Expected authored mesh_effect size reflected in node scale, got " + str(mesh_node.scale))
         return
     quit(0)
 """
 
-MESH_PARTICLE_PROBE = """extends SceneTree
+
+def mesh_particle_probe(layer_id: str, expected_class: str) -> str:
+    return f"""extends SceneTree
 
 func _fail(message: String) -> void:
     push_error(message)
@@ -117,15 +123,29 @@ func _initialize() -> void:
     root.add_child(instance)
     await process_frame
     await process_frame
-    var particles := instance.get_node_or_null("mesh_particles") as GPUParticles3D
+    var particles := instance.get_node_or_null("{layer_id}") as GPUParticles3D
     if particles == null or particles.draw_pass_1 == null:
-        _fail("Expected mesh_particle node")
+        _fail("Expected mesh_particle node '{layer_id}'")
         return
-    if not particles.draw_pass_1 is BoxMesh:
-        _fail("Expected mesh_particle default mesh=box to use BoxMesh draw pass")
+    if not particles.draw_pass_1 is {expected_class}:
+        _fail("Expected mesh_particle to use {expected_class} draw pass, got " + str(particles.draw_pass_1))
         return
     quit(0)
 """
+
+MESH_EFFECT_PRIMITIVES = (
+    ("box", "BoxMesh", (2.0, 3.0, 1.0)),
+    ("quad", "QuadMesh", (2.0, 3.0, 1.0)),
+    ("sphere", "SphereMesh", (1.0, 1.0, 1.0)),
+    ("torus", "TorusMesh", (1.0, 1.0, 1.0)),
+)
+
+MESH_PARTICLE_PRIMITIVES = (
+    ("box", "BoxMesh"),
+    ("quad", "QuadMesh"),
+    ("sphere", "SphereMesh"),
+    ("torus", "TorusMesh"),
+)
 
 SPRITE_PROBE = """extends SceneTree
 
@@ -264,15 +284,36 @@ class RuntimeBehaviorTests(unittest.TestCase):
             assets={"assets/textures/atlas.png": rgba_png(4, 1)},
         )
 
-    def test_mesh_effect_uses_authored_primitive(self) -> None:
-        document = default_document("mesh_effect_probe", "Mesh Effect Probe", 1.0)
-        layer = make_layer("mesh_effect", "mesh_probe")
-        layer["properties"]["mesh"] = "box"
-        document["layers"] = [layer]
-        self._run_export_probe(document, "mesh_effect_probe.vfx.json", "mesh_effect_probe.gd", MESH_EFFECT_PROBE)
+    def test_mesh_effect_primitives_match_authored_size_and_class(self) -> None:
+        for mesh_name, expected_class, size in MESH_EFFECT_PRIMITIVES:
+            with self.subTest(mesh=mesh_name):
+                document = default_document(f"mesh_effect_{mesh_name}", f"Mesh Effect {mesh_name}", 1.0)
+                layer = make_layer("mesh_effect", "mesh_probe")
+                layer["properties"]["mesh"] = mesh_name
+                layer["properties"]["size"] = list(size)
+                layer["curves"]["scale"] = {
+                    "interpolation": "linear",
+                    "points": [{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 1.0}],
+                }
+                document["layers"] = [layer]
+                self._run_export_probe(
+                    document,
+                    f"mesh_effect_{mesh_name}.vfx.json",
+                    f"mesh_effect_{mesh_name}_probe.gd",
+                    mesh_effect_probe("mesh_probe", expected_class, size),
+                )
 
-    def test_mesh_particle_default_uses_box_draw_pass(self) -> None:
-        document = default_document("mesh_particle_probe", "Mesh Particle Probe", 1.0)
-        layer = make_layer("mesh_particle", "mesh_particles")
-        document["layers"] = [layer]
-        self._run_export_probe(document, "mesh_particle_probe.vfx.json", "mesh_particle_probe.gd", MESH_PARTICLE_PROBE)
+    def test_mesh_particle_primitives_use_expected_draw_pass(self) -> None:
+        for mesh_name, expected_class in MESH_PARTICLE_PRIMITIVES:
+            with self.subTest(mesh=mesh_name):
+                document = default_document(f"mesh_particle_{mesh_name}", f"Mesh Particle {mesh_name}", 1.0)
+                layer = make_layer("mesh_particle", "mesh_particles")
+                if mesh_name != "box":
+                    layer["properties"]["mesh"] = mesh_name
+                document["layers"] = [layer]
+                self._run_export_probe(
+                    document,
+                    f"mesh_particle_{mesh_name}.vfx.json",
+                    f"mesh_particle_{mesh_name}_probe.gd",
+                    mesh_particle_probe("mesh_particles", expected_class),
+                )

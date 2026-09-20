@@ -17,6 +17,7 @@ from .schema import COMMON_LAYER, LAYER_DEFAULTS, SCHEMA_VERSION, make_layer
 
 
 ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,63}$")
+EXPORT_PROVENANCE = "export"
 
 
 def is_stable_id(value: Any) -> bool:
@@ -139,11 +140,34 @@ def _fsync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
+def serialize_document(document: dict[str, Any], *, indent: int | None = 2) -> str:
+    """Serialize a canonical document with strict JSON number semantics."""
+    if indent is None:
+        return json.dumps(document, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    payload = json.dumps(document, indent=indent, ensure_ascii=False, sort_keys=False, allow_nan=False)
+    return payload + "\n"
+
+
+def is_generated_effect_document(document: dict[str, Any]) -> bool:
+    metadata = document.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return False
+    return metadata.get("vfxforge_provenance") == EXPORT_PROVENANCE
+
+
+def stamp_export_provenance(document: dict[str, Any]) -> dict[str, Any]:
+    stamped = deepcopy(document)
+    metadata = stamped.setdefault("metadata", {})
+    if isinstance(metadata, dict):
+        metadata["vfxforge_provenance"] = EXPORT_PROVENANCE
+    return stamped
+
+
 def write_document(path: str | Path, document: dict[str, Any], make_backup: bool = True) -> None:
     """Write a document atomically, retaining a last-known-good .bak copy."""
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    serialized = json.dumps(document, indent=2, ensure_ascii=False, sort_keys=False, allow_nan=False) + "\n"
+    serialized = serialize_document(document)
     fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
     temporary = Path(temporary_name)
     try:

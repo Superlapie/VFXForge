@@ -17,6 +17,7 @@ from .property_spec import (
     layer_property_keys,
     validate_layer_material_types,
     validate_layer_property_types,
+    validate_layer_property_relations,
 )
 from .schema import BLEND_MODES, BUDGET_PROFILES, EMISSION_SHAPES, LAYER_TYPES, MESH_ASSET_EXTENSIONS
 
@@ -532,6 +533,7 @@ def validate_document(
             errors.append(issue("error", code, field_path, message, suggestion, value))
 
         validate_layer_property_types(layer_type, properties, path_prefix=path, append_error=append_type_error)
+        validate_layer_property_relations(layer_type, properties, path_prefix=path, append_error=append_type_error)
         validate_layer_material_types(material, path_prefix=path, append_error=append_type_error)
         if not isinstance(layer.get("name"), str) or not layer.get("name", "").strip():
             warnings.append(issue("warning", "EMPTY_LAYER_NAME", f"{path}.name", "The layer has no display name."))

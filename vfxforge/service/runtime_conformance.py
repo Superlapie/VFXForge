@@ -10,7 +10,7 @@ from ..resources import godot_runtime_dir
 from ..schema import BILLBOARD_MODES, BLEND_MODES, COMMON_LAYER, LAYER_DEFAULTS, LAYER_TYPES
 
 
-RUNTIME_CONTRACT_VERSION = 4
+RUNTIME_CONTRACT_VERSION = 5
 
 PropertyTier = str  # implemented | emulated | inert_only | unsupported | host_bound
 
@@ -57,7 +57,6 @@ PROPERTY_TIER_OVERRIDES: dict[str, dict[str, PropertyTier]] = {
         "attractor_position": "inert_only",
     },
     "mesh_particle": {
-        "mesh": "inert_only",
         "rotation_speed": "inert_only",
         "turbulence": "inert_only",
         "attractor_strength": "inert_only",

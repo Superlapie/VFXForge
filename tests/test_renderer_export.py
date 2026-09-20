@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
+from vfxforge.effect_refs import resolve_effect
 from vfxforge.exporter import export_document
 from vfxforge.model import write_document
 from vfxforge.presets import make_preset
@@ -140,3 +142,18 @@ class RendererExportTests(unittest.TestCase):
             export_document(parent, parent_path, output, run_smoke_test=False)
             export_document(parent, parent_path, output, run_smoke_test=False)
             self.assertTrue((output / "effect.tscn").is_file())
+
+    def test_exported_root_document_does_not_contaminate_stable_id_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = default_document("fireball", "Fireball", 1.0)
+            source_path = root / "fireball.vfx.json"
+            write_document(source_path, source)
+            generated_dir = root / "generated"
+            generated_dir.mkdir()
+            export_document(source, source_path, generated_dir, run_smoke_test=False)
+            exported_doc = json.loads((generated_dir / "document.vfx.json").read_text(encoding="utf-8"))
+            self.assertEqual(exported_doc["metadata"]["vfxforge_provenance"], "export")
+            resolved = resolve_effect("fireball", document_dir=root, project_root=root)
+            self.assertIsNone(resolved.error_code)
+            self.assertEqual(resolved.path, source_path.resolve())

@@ -15,7 +15,7 @@ from typing import Any
 
 from .effect_refs import resolve_effect, resolve_effect_path
 from .errors import ExportError
-from .model import read_document
+from .model import read_document, serialize_document, stamp_export_provenance
 from .resources import godot_runtime_dir, host_smoke_dir
 from .service.paths import validate_resource_path
 from .validation import validate_document
@@ -175,7 +175,7 @@ def _replace_refs(value: Any, replacements: dict[str, str]) -> Any:
 
 
 def _escaped_document_string(document: dict[str, Any]) -> str:
-    serialized = json.dumps(document, separators=(",", ":"), ensure_ascii=False)
+    serialized = serialize_document(document, indent=None)
     return serialized.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
 
 
@@ -588,9 +588,11 @@ def export_document(
     for source_key, (child_document, child_source) in effect_documents.items():
         rewritten_child = _rewrite_document_effect_refs(child_document, child_source.parent, resolved_project, source_exports)
         rewritten_child = _replace_refs(_replace_refs(rewritten_child, texture_replacements), mesh_replacements)
+        rewritten_child = stamp_export_provenance(rewritten_child)
         target = destination / source_exports[source_key]
-        target.write_text(json.dumps(rewritten_child, indent=2) + "\n", encoding="utf-8")
+        target.write_text(serialize_document(rewritten_child), encoding="utf-8")
     exported_document = _replace_refs(_replace_refs(exported_document, texture_replacements), mesh_replacements)
+    exported_document = stamp_export_provenance(exported_document)
 
     runtime_source = godot_runtime_dir() / "vfx_runtime.gd"
     trail_source = godot_runtime_dir() / "vfx_trail.gd"
@@ -670,7 +672,7 @@ void fragment() {
             + "\n",
             encoding="utf-8",
         )
-    (destination / "document.vfx.json").write_text(json.dumps(exported_document, indent=2) + "\n", encoding="utf-8")
+    (destination / "document.vfx.json").write_text(serialize_document(exported_document), encoding="utf-8")
     smoke = {"status": "not_requested"}
     host_smoke: dict[str, Any] = {"status": "not_requested"}
     if run_smoke_test and mode == "standalone":

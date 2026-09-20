@@ -77,8 +77,17 @@ PROPERTY_RANGES: dict[tuple[str, str], tuple[float | None, float | None]] = {
     ("particle", "randomness"): (0.0, 1.0),
     ("particle", "lifetime"): (0.02, None),
     ("particle", "amount"): (0.0, None),
+    ("particle", "fixed_fps"): (0.0, None),
     ("mesh_particle", "lifetime"): (0.02, None),
     ("mesh_particle", "amount"): (0.0, None),
+    ("sprite", "flipbook_columns"): (1.0, None),
+    ("sprite", "flipbook_rows"): (1.0, None),
+    ("sprite", "flipbook_frames"): (1.0, None),
+    ("sprite", "flipbook_start_frame"): (0.0, None),
+    ("sprite", "flipbook_fps"): (0.0, None),
+    ("trail", "width"): (0.01, None),
+    ("trail", "lifetime"): (0.02, None),
+    ("trail", "alpha"): (0.0, 1.0),
     ("trail", "segments"): (2.0, 64.0),
     ("beam", "segments"): (2.0, 64.0),
     ("beam", "thickness"): (0.01, None),
@@ -282,42 +291,119 @@ def _range_error(spec: FieldSpec, value: float) -> str | None:
     return None
 
 
-def validate_field_value(spec: FieldSpec, value: Any) -> str | None:
+def validate_field_value(spec: FieldSpec, value: Any) -> tuple[str, str] | None:
     if spec.kind == "boolean":
-        return None if isinstance(value, bool) else f"expected boolean, got {type(value).__name__}"
+        if isinstance(value, bool):
+            return None
+        return ("INVALID_PROPERTY_TYPE", f"expected boolean, got {type(value).__name__}")
     if spec.kind == "integer":
         if not isinstance(value, int) or isinstance(value, bool):
-            return f"expected integer, got {type(value).__name__}"
-        return _range_error(spec, float(value))
+            return ("INVALID_PROPERTY_TYPE", f"expected integer, got {type(value).__name__}")
+        range_message = _range_error(spec, float(value))
+        if range_message is not None:
+            return ("PROPERTY_OUT_OF_RANGE", range_message)
+        return None
     if spec.kind == "number":
-        if not _is_finite_number(value):
-            return f"expected finite number, got {value!r}"
-        return _range_error(spec, float(value))
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return ("INVALID_PROPERTY_TYPE", f"expected number, got {type(value).__name__}")
+        if not math.isfinite(float(value)):
+            return ("NON_FINITE_PROPERTY", f"expected finite number, got {value!r}")
+        range_message = _range_error(spec, float(value))
+        if range_message is not None:
+            return ("PROPERTY_OUT_OF_RANGE", range_message)
+        return None
     if spec.kind == "string":
-        return None if isinstance(value, str) else f"expected string, got {type(value).__name__}"
+        if isinstance(value, str):
+            return None
+        return ("INVALID_PROPERTY_TYPE", f"expected string, got {type(value).__name__}")
     if spec.kind == "enum":
-        return None if isinstance(value, str) and value in spec.values else f"expected one of: {', '.join(spec.values)}"
+        if isinstance(value, str) and value in spec.values:
+            return None
+        return ("INVALID_PROPERTY_ENUM", f"expected one of: {', '.join(spec.values)}")
     if spec.kind == "color":
-        return None if _is_color(value) else "expected #RRGGBB or #RRGGBBAA color string"
+        if _is_color(value):
+            return None
+        return ("INVALID_PROPERTY_TYPE", "expected #RRGGBB or #RRGGBBAA color string")
     if spec.kind == "vector2":
         if not _validate_vector(value, 2):
-            return "expected finite [x, y] numeric array"
+            return ("INVALID_PROPERTY_TYPE", "expected finite [x, y] numeric array")
         for item in value:
-            message = _range_error(spec, float(item))
-            if message is not None:
-                return message
+            range_message = _range_error(spec, float(item))
+            if range_message is not None:
+                return ("PROPERTY_OUT_OF_RANGE", range_message)
         return None
     if spec.kind == "vector3":
         if not _validate_vector(value, 3):
-            return "expected finite [x, y, z] numeric array"
+            return ("INVALID_PROPERTY_TYPE", "expected finite [x, y, z] numeric array")
         for item in value:
-            message = _range_error(spec, float(item))
-            if message is not None:
-                return message
+            range_message = _range_error(spec, float(item))
+            if range_message is not None:
+                return ("PROPERTY_OUT_OF_RANGE", range_message)
         return None
     if spec.kind == "object":
-        return None if isinstance(value, dict) else f"expected object, got {type(value).__name__}"
+        if isinstance(value, dict):
+            return None
+        return ("INVALID_PROPERTY_TYPE", f"expected object, got {type(value).__name__}")
     return None
+
+
+def _material_error_code(code: str) -> str:
+    if code == "INVALID_PROPERTY_TYPE":
+        return "INVALID_MATERIAL_TYPE"
+    if code == "INVALID_PROPERTY_ENUM":
+        return "INVALID_MATERIAL_ENUM"
+    if code == "PROPERTY_OUT_OF_RANGE":
+        return "MATERIAL_OUT_OF_RANGE"
+    if code == "NON_FINITE_PROPERTY":
+        return "NON_FINITE_MATERIAL"
+    return code
+
+
+def validate_layer_property_relations(
+    layer_type: str,
+    properties: dict[str, Any],
+    *,
+    path_prefix: str,
+    append_error: Callable[[str, str, str, str, Any], None],
+) -> None:
+    if layer_type != "sprite":
+        return
+    defaults = LAYER_DEFAULTS["sprite"]["properties"]
+    columns = properties.get("flipbook_columns", defaults["flipbook_columns"])
+    rows = properties.get("flipbook_rows", defaults["flipbook_rows"])
+    frames = properties.get("flipbook_frames", defaults["flipbook_frames"])
+    start_frame = properties.get("flipbook_start_frame", defaults["flipbook_start_frame"])
+    fps = properties.get("flipbook_fps", defaults["flipbook_fps"])
+    if not all(isinstance(item, int) and not isinstance(item, bool) for item in (columns, rows, frames, start_frame)):
+        return
+    atlas_capacity = columns * rows
+    if frames > atlas_capacity:
+        append_error(
+            "INVALID_PROPERTY_RELATION",
+            f"{path_prefix}.properties.flipbook_frames",
+            (
+                f"flipbook_frames ({frames}) exceeds atlas capacity "
+                f"({columns} columns x {rows} rows = {atlas_capacity})."
+            ),
+            "Reduce flipbook_frames or expand the atlas grid.",
+            frames,
+        )
+    if start_frame < 0 or start_frame >= frames:
+        append_error(
+            "INVALID_PROPERTY_RELATION",
+            f"{path_prefix}.properties.flipbook_start_frame",
+            f"flipbook_start_frame ({start_frame}) must satisfy 0 <= start_frame < flipbook_frames ({frames}).",
+            "Choose a start frame inside the authored atlas.",
+            start_frame,
+        )
+    if frames > 1 and (not isinstance(fps, (int, float)) or isinstance(fps, bool) or float(fps) <= 0.0):
+        append_error(
+            "INVALID_PROPERTY_RELATION",
+            f"{path_prefix}.properties.flipbook_fps",
+            "flipbook_fps must be greater than zero when flipbook_frames is greater than one.",
+            "Set flipbook_fps above zero or disable the flipbook.",
+            fps,
+        )
 
 
 def validate_layer_property_types(
@@ -332,12 +418,13 @@ def validate_layer_property_types(
         spec = specs.get(key)
         if spec is None:
             continue
-        message = validate_field_value(spec, value)
-        if message is not None:
+        result = validate_field_value(spec, value)
+        if result is not None:
+            code, message = result
             append_error(
-                "INVALID_PROPERTY_TYPE",
+                code,
                 f"{path_prefix}.properties.{key}",
-                f"Property '{key}' on layer type '{layer_type}' has invalid type: {message}.",
+                f"Property '{key}' on layer type '{layer_type}' has invalid value: {message}.",
                 "Use the canonical typed value for this field.",
                 value,
             )
@@ -353,12 +440,13 @@ def validate_layer_material_types(
         spec = LAYER_MATERIAL_SPECS.get(key)
         if spec is None:
             continue
-        message = validate_field_value(spec, value)
-        if message is not None:
+        result = validate_field_value(spec, value)
+        if result is not None:
+            code, message = result
             append_error(
-                "INVALID_MATERIAL_TYPE",
+                _material_error_code(code),
                 f"{path_prefix}.material.{key}",
-                f"Material field '{key}' has invalid type: {message}.",
+                f"Material field '{key}' has invalid value: {message}.",
                 "Use the canonical typed value for this field.",
                 value,
             )
