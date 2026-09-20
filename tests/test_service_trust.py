@@ -318,6 +318,15 @@ class ChildEffectSafetyTests(unittest.TestCase):
             self.assertIsNone(resolved.error_code)
             self.assertEqual(resolved.path, spark_path.resolve())
 
+    def test_hex_suffix_source_filename_remains_eligible_for_stable_id_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spark_path = root / "explosion_deadbeef.vfx.json"
+            write_document(spark_path, default_document("explosion", "Explosion", 1.0))
+            resolved = resolve_effect("explosion", document_dir=root, project_root=root)
+            self.assertIsNone(resolved.error_code)
+            self.assertEqual(resolved.path, spark_path.resolve())
+
 
 class PromotionLockTests(unittest.TestCase):
     def test_stale_promotion_lock_is_recovered(self) -> None:
@@ -529,6 +538,53 @@ class RuntimeConformanceTests(unittest.TestCase):
         runtime_errors = validate_runtime_conformance(document)
         self.assertEqual(runtime_errors, [], msg=runtime_errors)
 
+    def test_extremely_large_integer_returns_structured_validation_error(self) -> None:
+        document = default_document("large_int_probe", "Large Int Probe", 1.0)
+        layer = make_layer("trail", "trail")
+        layer["properties"]["segments"] = 10**1000
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large_int_probe.vfx.json"
+            validation = validate_document(document, Path(tmp), document_path=path)
+        self.assertFalse(validation["valid"])
+        self.assertIn("PROPERTY_OUT_OF_RANGE", {item["code"] for item in validation["errors"]})
+
+    def test_invalid_metadata_object_is_rejected(self) -> None:
+        document = default_document("metadata_probe", "Metadata Probe", 1.0)
+        document["metadata"] = "legacy"
+        with tempfile.TemporaryDirectory() as tmp:
+            validation = validate_document(document, Path(tmp))
+        self.assertFalse(validation["valid"])
+        self.assertIn("INVALID_METADATA", {item["code"] for item in validation["errors"]})
+
+    def test_reserved_metadata_provenance_is_rejected_on_source_documents(self) -> None:
+        document = default_document("reserved_probe", "Reserved Probe", 1.0)
+        document["metadata"] = {"vfxforge_provenance": "export"}
+        with tempfile.TemporaryDirectory() as tmp:
+            validation = validate_document(document, Path(tmp))
+        self.assertFalse(validation["valid"])
+        self.assertIn("RESERVED_METADATA_FIELD", {item["code"] for item in validation["errors"]})
+
+    def test_non_finite_object_payload_is_rejected(self) -> None:
+        document = default_document("payload_probe", "Payload Probe", 1.0)
+        layer = make_layer("event_marker", "marker")
+        layer["properties"]["payload"] = {"damage": float("nan")}
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            validation = validate_document(document, Path(tmp))
+        self.assertFalse(validation["valid"])
+        self.assertIn("NON_FINITE_PROPERTY", {item["code"] for item in validation["errors"]})
+
+    def test_vector_non_finite_component_reports_non_finite_property(self) -> None:
+        document = default_document("vector_probe", "Vector Probe", 1.0)
+        layer = make_layer("mesh_particle", "particles")
+        layer["properties"]["size"] = [1.0, float("nan"), 1.0]
+        document["layers"] = [layer]
+        with tempfile.TemporaryDirectory() as tmp:
+            validation = validate_document(document, Path(tmp))
+        self.assertFalse(validation["valid"])
+        self.assertIn("NON_FINITE_PROPERTY", {item["code"] for item in validation["errors"]})
+
     def test_particle_billboard_enum_is_validated_even_when_emulated(self) -> None:
         document = default_document("billboard_probe", "Billboard Probe", 1.0)
         layer = make_layer("particle", "sparks")
@@ -547,9 +603,11 @@ class CapabilitiesDiscoveryTests(unittest.TestCase):
         boss = next(item for item in payload["recipes"] if item["id"] == "boss.line_sweep")
         self.assertIn("gameplay.tell_ms", boss["required"])
         self.assertTrue(boss["unsupported_parameters_are_errors"])
-        self.assertEqual(payload["capabilities_version"], 5)
+        self.assertEqual(payload["capabilities_version"], 6)
         self.assertIn("reference_semantics", payload)
         self.assertIn("field_specs", payload)
+        self.assertIn("property_relations", payload)
+        self.assertIn("flipbook_frames_capacity", {item["id"] for item in payload["property_relations"]["sprite"]})
         self.assertIn("one_shot", payload["field_specs"]["layers"]["particle"]["properties"])
         self.assertIn("request_contract", payload)
         self.assertIn("target_policy_bindings", payload)

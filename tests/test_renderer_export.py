@@ -157,3 +157,20 @@ class RendererExportTests(unittest.TestCase):
             resolved = resolve_effect("fireball", document_dir=root, project_root=root)
             self.assertIsNone(resolved.error_code)
             self.assertEqual(resolved.path, source_path.resolve())
+
+    def test_export_stamps_provenance_when_source_metadata_is_malformed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = default_document("fireball", "Fireball", 1.0)
+            source["metadata"] = "legacy"
+            source_path = root / "fireball.vfx.json"
+            write_document(source_path, source)
+            generated_dir = root / "generated"
+            generated_dir.mkdir()
+            export_document(source, source_path, generated_dir, run_smoke_test=False)
+            exported_doc = json.loads((generated_dir / "document.vfx.json").read_text(encoding="utf-8"))
+            self.assertIsInstance(exported_doc["metadata"], dict)
+            self.assertEqual(exported_doc["metadata"]["vfxforge_provenance"], "export")
+            resolved = resolve_effect("fireball", document_dir=root, project_root=root)
+            self.assertIsNone(resolved.error_code)
+            self.assertEqual(resolved.path, source_path.resolve())

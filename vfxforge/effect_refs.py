@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .model import is_generated_effect_document, read_document
-
-
-EXPORT_EFFECT_NAME = re.compile(r"^.+_[0-9a-f]{8}(?:_\d+)?\.vfx\.json$")
 
 
 @dataclass(frozen=True)
@@ -43,8 +39,6 @@ def is_source_effect_document(
     for part in relative.parts[:-1]:
         if part.startswith(".") and "export-staging" in part:
             return False
-    if EXPORT_EFFECT_NAME.match(relative.name):
-        return False
     payload = document
     if payload is None:
         try:

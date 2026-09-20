@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .effect_refs import reference_escapes_project, resolve_effect, resolve_effect_path
-from .model import finite_number, is_stable_id, read_document
+from .model import RESERVED_METADATA_KEYS, finite_number, is_stable_id, read_document, validate_json_safe
 from .property_spec import (
     LAYER_STRUCT_KEYS,
     ROOT_KEYS,
@@ -68,6 +68,14 @@ def _number(
             )
         )
         return False
+    if isinstance(value, int):
+        if minimum is not None and value < minimum:
+            errors.append(issue("error", "NUMBER_TOO_SMALL", path, f"Value must be at least {minimum}.", value=value))
+            return False
+        if maximum is not None and value > maximum:
+            errors.append(issue("error", "NUMBER_TOO_LARGE", path, f"Value must be at most {maximum}.", value=value))
+            return False
+        return True
     numeric = float(value)
     if minimum is not None and numeric < minimum:
         errors.append(issue("error", "NUMBER_TOO_SMALL", path, f"Value must be at least {minimum}.", value=value))
@@ -471,6 +479,41 @@ def validate_document(
         )
     if not isinstance(root.get("name"), str) or not root.get("name", "").strip():
         errors.append(issue("error", "MISSING_NAME", "name", "The effect needs a non-empty display name."))
+    if "metadata" in root and not isinstance(root.get("metadata"), dict):
+        errors.append(
+            issue(
+                "error",
+                "INVALID_METADATA",
+                "metadata",
+                "metadata must be an object.",
+                "Use an object such as {} or omit metadata.",
+                root.get("metadata"),
+            )
+        )
+    elif isinstance(root.get("metadata"), dict):
+        for key in root["metadata"]:
+            if key in RESERVED_METADATA_KEYS:
+                errors.append(
+                    issue(
+                        "error",
+                        "RESERVED_METADATA_FIELD",
+                        f"metadata.{key}",
+                        f"metadata field '{key}' is reserved for generated export documents.",
+                        "Remove the reserved provenance field from source documents.",
+                        key,
+                    )
+                )
+    for bad_path, bad_value in validate_json_safe(root):
+        errors.append(
+            issue(
+                "error",
+                "NON_FINITE_JSON",
+                bad_path,
+                f"Non-finite JSON value: {bad_value!r}",
+                "Use finite numeric values throughout the document.",
+                bad_value,
+            )
+        )
     _number(errors, warnings, root.get("duration"), "duration", 0.001, 3600.0, True)
     if not isinstance(root.get("loop"), bool):
         errors.append(issue("error", "INVALID_LOOP", "loop", "loop must be boolean.", value=root.get("loop")))

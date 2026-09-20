@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..property_spec import describe_property_registry
+from ..property_spec import describe_property_registry, describe_property_relations
 from ..schema import LAYER_TYPES
 from .matrix import load_canonical_request, load_recipe_matrix
 from .policy_target import target_policy_bindings
@@ -77,8 +77,9 @@ def capabilities(policy_id: str | None = None) -> dict[str, Any]:
     recipes = [_recipe_capability(load_recipe(item)) for item in list_recipes()]
     selected = policies[0] if policy_id and policies else None
     return {
-        "capabilities_version": 5,
+        "capabilities_version": 6,
         "field_specs": describe_property_registry(),
+        "property_relations": describe_property_relations(),
         "reference_semantics": {
             "child_effects": {
                 "res://": "project_root",

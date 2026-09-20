@@ -273,22 +273,100 @@ def _is_color(value: Any) -> bool:
     return len(hex_part) in {6, 8} and all(item in "0123456789abcdefABCDEF" for item in hex_part)
 
 
-def _is_finite_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
-
-
-def _validate_vector(value: Any, dimensions: int) -> bool:
-    if not isinstance(value, list) or len(value) != dimensions:
+def _is_finite_scalar(value: Any) -> bool:
+    if isinstance(value, bool):
         return False
-    return all(_is_finite_number(item) for item in value)
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
 
 
-def _range_error(spec: FieldSpec, value: float) -> str | None:
-    if spec.minimum is not None and value < spec.minimum:
-        return f"expected value >= {spec.minimum}"
-    if spec.maximum is not None and value > spec.maximum:
-        return f"expected value <= {spec.maximum}"
+def _scalar_range_error(spec: FieldSpec, value: int | float) -> str | None:
+    if spec.minimum is not None:
+        if isinstance(value, int) and isinstance(spec.minimum, float) and spec.minimum.is_integer():
+            if value < int(spec.minimum):
+                return f"expected value >= {spec.minimum}"
+        elif value < spec.minimum:
+            return f"expected value >= {spec.minimum}"
+    if spec.maximum is not None:
+        if isinstance(value, int) and isinstance(spec.maximum, float) and spec.maximum.is_integer():
+            if value > int(spec.maximum):
+                return f"expected value <= {spec.maximum}"
+        elif value > spec.maximum:
+            return f"expected value <= {spec.maximum}"
     return None
+
+
+def _validate_vector_value(spec: FieldSpec, value: Any, dimensions: int) -> tuple[str, str] | None:
+    if not isinstance(value, list) or len(value) != dimensions:
+        return ("INVALID_PROPERTY_TYPE", f"expected finite numeric array of length {dimensions}")
+    for index, item in enumerate(value):
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            return (
+                "INVALID_PROPERTY_TYPE",
+                f"expected numeric component at index {index}, got {type(item).__name__}",
+            )
+        if isinstance(item, float) and not math.isfinite(item):
+            return ("NON_FINITE_PROPERTY", f"expected finite numeric component at index {index}, got {item!r}")
+        range_message = _scalar_range_error(spec, item)
+        if range_message is not None:
+            return ("PROPERTY_OUT_OF_RANGE", f"component {index}: {range_message}")
+    return None
+
+
+PROPERTY_RELATIONS: dict[str, tuple[dict[str, Any], ...]] = {
+    "sprite": (
+        {
+            "id": "flipbook_frames_capacity",
+            "constraint": "flipbook_frames <= flipbook_columns * flipbook_rows",
+            "fields": ["flipbook_columns", "flipbook_rows", "flipbook_frames"],
+        },
+        {
+            "id": "flipbook_start_frame_bounds",
+            "constraint": "0 <= flipbook_start_frame < flipbook_frames",
+            "fields": ["flipbook_start_frame", "flipbook_frames"],
+        },
+        {
+            "id": "flipbook_fps_when_animated",
+            "constraint": "flipbook_fps > 0 when flipbook_frames > 1",
+            "fields": ["flipbook_fps", "flipbook_frames"],
+        },
+    ),
+    "mesh_particle": (
+        {
+            "id": "custom_mesh_disables_primitive_selector",
+            "when": "mesh_asset != ''",
+            "constraint": "mesh must remain the default primitive selector value",
+            "fields": ["mesh_asset", "mesh"],
+            "runtime_note": "Imported mesh_asset replaces draw_pass_1; mesh is ignored.",
+        },
+        {
+            "id": "custom_mesh_disables_size_scaling",
+            "when": "mesh_asset != ''",
+            "constraint": "size must remain the default vector",
+            "fields": ["mesh_asset", "size"],
+            "runtime_note": "Imported mesh_asset is not scaled by size at runtime.",
+        },
+        {
+            "id": "sphere_uniform_size",
+            "when": "mesh == 'sphere' and mesh_asset == ''",
+            "constraint": "size.x == size.y == size.z",
+            "fields": ["mesh", "size"],
+            "runtime_note": "Sphere primitive radius derives from min(size.x, size.y, size.z).",
+        },
+        {
+            "id": "torus_primary_axis_size",
+            "when": "mesh == 'torus' and mesh_asset == ''",
+            "constraint": "size.x == size.y == size.z",
+            "fields": ["mesh", "size"],
+            "runtime_note": "Torus primitive radii derive from size.x only; keep size uniform.",
+        },
+    ),
+}
+
+
+def describe_property_relations() -> dict[str, list[dict[str, Any]]]:
+    return {layer_type: [dict(rule) for rule in rules] for layer_type, rules in PROPERTY_RELATIONS.items()}
 
 
 def validate_field_value(spec: FieldSpec, value: Any) -> tuple[str, str] | None:
@@ -299,16 +377,16 @@ def validate_field_value(spec: FieldSpec, value: Any) -> tuple[str, str] | None:
     if spec.kind == "integer":
         if not isinstance(value, int) or isinstance(value, bool):
             return ("INVALID_PROPERTY_TYPE", f"expected integer, got {type(value).__name__}")
-        range_message = _range_error(spec, float(value))
+        range_message = _scalar_range_error(spec, value)
         if range_message is not None:
             return ("PROPERTY_OUT_OF_RANGE", range_message)
         return None
     if spec.kind == "number":
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return ("INVALID_PROPERTY_TYPE", f"expected number, got {type(value).__name__}")
-        if not math.isfinite(float(value)):
+        if isinstance(value, float) and not math.isfinite(value):
             return ("NON_FINITE_PROPERTY", f"expected finite number, got {value!r}")
-        range_message = _range_error(spec, float(value))
+        range_message = _scalar_range_error(spec, value)
         if range_message is not None:
             return ("PROPERTY_OUT_OF_RANGE", range_message)
         return None
@@ -325,25 +403,17 @@ def validate_field_value(spec: FieldSpec, value: Any) -> tuple[str, str] | None:
             return None
         return ("INVALID_PROPERTY_TYPE", "expected #RRGGBB or #RRGGBBAA color string")
     if spec.kind == "vector2":
-        if not _validate_vector(value, 2):
-            return ("INVALID_PROPERTY_TYPE", "expected finite [x, y] numeric array")
-        for item in value:
-            range_message = _range_error(spec, float(item))
-            if range_message is not None:
-                return ("PROPERTY_OUT_OF_RANGE", range_message)
-        return None
+        return _validate_vector_value(spec, value, 2)
     if spec.kind == "vector3":
-        if not _validate_vector(value, 3):
-            return ("INVALID_PROPERTY_TYPE", "expected finite [x, y, z] numeric array")
-        for item in value:
-            range_message = _range_error(spec, float(item))
-            if range_message is not None:
-                return ("PROPERTY_OUT_OF_RANGE", range_message)
-        return None
+        return _validate_vector_value(spec, value, 3)
     if spec.kind == "object":
-        if isinstance(value, dict):
-            return None
-        return ("INVALID_PROPERTY_TYPE", f"expected object, got {type(value).__name__}")
+        if not isinstance(value, dict):
+            return ("INVALID_PROPERTY_TYPE", f"expected object, got {type(value).__name__}")
+        from .model import validate_json_safe
+
+        for bad_path, bad_value in validate_json_safe(value, path=""):
+            return ("NON_FINITE_PROPERTY", f"expected finite JSON values in object, got {bad_value!r} at {bad_path}")
+        return None
     return None
 
 
@@ -366,43 +436,87 @@ def validate_layer_property_relations(
     path_prefix: str,
     append_error: Callable[[str, str, str, str, Any], None],
 ) -> None:
-    if layer_type != "sprite":
+    if layer_type == "sprite":
+        defaults = LAYER_DEFAULTS["sprite"]["properties"]
+        columns = properties.get("flipbook_columns", defaults["flipbook_columns"])
+        rows = properties.get("flipbook_rows", defaults["flipbook_rows"])
+        frames = properties.get("flipbook_frames", defaults["flipbook_frames"])
+        start_frame = properties.get("flipbook_start_frame", defaults["flipbook_start_frame"])
+        fps = properties.get("flipbook_fps", defaults["flipbook_fps"])
+        if not all(isinstance(item, int) and not isinstance(item, bool) for item in (columns, rows, frames, start_frame)):
+            return
+        atlas_capacity = columns * rows
+        if frames > atlas_capacity:
+            append_error(
+                "INVALID_PROPERTY_RELATION",
+                f"{path_prefix}.properties.flipbook_frames",
+                (
+                    f"flipbook_frames ({frames}) exceeds atlas capacity "
+                    f"({columns} columns x {rows} rows = {atlas_capacity})."
+                ),
+                "Reduce flipbook_frames or expand the atlas grid.",
+                frames,
+            )
+        if start_frame < 0 or start_frame >= frames:
+            append_error(
+                "INVALID_PROPERTY_RELATION",
+                f"{path_prefix}.properties.flipbook_start_frame",
+                f"flipbook_start_frame ({start_frame}) must satisfy 0 <= start_frame < flipbook_frames ({frames}).",
+                "Choose a start frame inside the authored atlas.",
+                start_frame,
+            )
+        if frames > 1 and (not isinstance(fps, (int, float)) or isinstance(fps, bool) or float(fps) <= 0.0):
+            append_error(
+                "INVALID_PROPERTY_RELATION",
+                f"{path_prefix}.properties.flipbook_fps",
+                "flipbook_fps must be greater than zero when flipbook_frames is greater than one.",
+                "Set flipbook_fps above zero or disable the flipbook.",
+                fps,
+            )
         return
-    defaults = LAYER_DEFAULTS["sprite"]["properties"]
-    columns = properties.get("flipbook_columns", defaults["flipbook_columns"])
-    rows = properties.get("flipbook_rows", defaults["flipbook_rows"])
-    frames = properties.get("flipbook_frames", defaults["flipbook_frames"])
-    start_frame = properties.get("flipbook_start_frame", defaults["flipbook_start_frame"])
-    fps = properties.get("flipbook_fps", defaults["flipbook_fps"])
-    if not all(isinstance(item, int) and not isinstance(item, bool) for item in (columns, rows, frames, start_frame)):
+
+    if layer_type != "mesh_particle":
         return
-    atlas_capacity = columns * rows
-    if frames > atlas_capacity:
+
+    defaults = LAYER_DEFAULTS["mesh_particle"]["properties"]
+    mesh_asset = str(properties.get("mesh_asset", defaults["mesh_asset"]))
+    mesh_name = str(properties.get("mesh", defaults["mesh"]))
+    size = properties.get("size", defaults["size"])
+    default_mesh = str(defaults["mesh"])
+    default_size = defaults["size"]
+
+    if mesh_asset:
+        if mesh_name != default_mesh:
+            append_error(
+                "INVALID_PROPERTY_RELATION",
+                f"{path_prefix}.properties.mesh",
+                "mesh is ignored when mesh_asset is set; keep the default primitive selector.",
+                "Clear mesh_asset or reset mesh to the default value.",
+                mesh_name,
+            )
+        if size != default_size:
+            append_error(
+                "INVALID_PROPERTY_RELATION",
+                f"{path_prefix}.properties.size",
+                "size is not applied to imported mesh_asset draw passes at runtime.",
+                "Clear mesh_asset or reset size to the default vector.",
+                size,
+            )
+        return
+
+    if mesh_name not in {"sphere", "torus"}:
+        return
+    if not isinstance(size, list) or len(size) != 3:
+        return
+    if not all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in size):
+        return
+    if not (size[0] == size[1] == size[2]):
         append_error(
             "INVALID_PROPERTY_RELATION",
-            f"{path_prefix}.properties.flipbook_frames",
-            (
-                f"flipbook_frames ({frames}) exceeds atlas capacity "
-                f"({columns} columns x {rows} rows = {atlas_capacity})."
-            ),
-            "Reduce flipbook_frames or expand the atlas grid.",
-            frames,
-        )
-    if start_frame < 0 or start_frame >= frames:
-        append_error(
-            "INVALID_PROPERTY_RELATION",
-            f"{path_prefix}.properties.flipbook_start_frame",
-            f"flipbook_start_frame ({start_frame}) must satisfy 0 <= start_frame < flipbook_frames ({frames}).",
-            "Choose a start frame inside the authored atlas.",
-            start_frame,
-        )
-    if frames > 1 and (not isinstance(fps, (int, float)) or isinstance(fps, bool) or float(fps) <= 0.0):
-        append_error(
-            "INVALID_PROPERTY_RELATION",
-            f"{path_prefix}.properties.flipbook_fps",
-            "flipbook_fps must be greater than zero when flipbook_frames is greater than one.",
-            "Set flipbook_fps above zero or disable the flipbook.",
-            fps,
+            f"{path_prefix}.properties.size",
+            f"mesh '{mesh_name}' requires uniform size.x == size.y == size.z for predictable primitive scaling.",
+            "Use equal size components or choose box/quad.",
+            size,
         )
 
 
@@ -479,4 +593,4 @@ def describe_property_registry() -> dict[str, Any]:
             },
             "curves": sorted(layer_curve_keys(layer_type)),
         }
-    return {"root_keys": sorted(ROOT_KEYS), "layers": layers}
+    return {"root_keys": sorted(ROOT_KEYS), "layers": layers, "relations": describe_property_relations()}

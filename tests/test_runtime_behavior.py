@@ -78,6 +78,21 @@ func _initialize() -> void:
 """
 
 def mesh_effect_probe(layer_id: str, expected_class: str, size: tuple[float, float, float]) -> str:
+    geometry_check = ""
+    if expected_class == "BoxMesh":
+        geometry_check = """
+    var box := mesh_node.mesh as BoxMesh
+    if box.size.distance_to(Vector3.ONE) > 0.05:
+        _fail("Expected BoxMesh unit geometry with authored size on node scale, got " + str(box.size))
+        return
+"""
+    elif expected_class == "QuadMesh":
+        geometry_check = """
+    var quad := mesh_node.mesh as QuadMesh
+    if quad.size.distance_to(Vector2.ONE) > 0.05:
+        _fail("Expected QuadMesh unit geometry with authored size on node scale, got " + str(quad.size))
+        return
+"""
     return f"""extends SceneTree
 
 func _fail(message: String) -> void:
@@ -100,7 +115,7 @@ func _initialize() -> void:
     if not mesh_node.mesh is {expected_class}:
         _fail("Expected mesh_effect to instantiate {expected_class}, got " + str(mesh_node.mesh))
         return
-    if abs(mesh_node.scale.x - {size[0]}) > 0.05 or abs(mesh_node.scale.y - {size[1]}) > 0.05 or abs(mesh_node.scale.z - {size[2]}) > 0.05:
+{geometry_check}    if abs(mesh_node.scale.x - {size[0]}) > 0.05 or abs(mesh_node.scale.y - {size[1]}) > 0.05 or abs(mesh_node.scale.z - {size[2]}) > 0.05:
         _fail("Expected authored mesh_effect size reflected in node scale, got " + str(mesh_node.scale))
         return
     quit(0)

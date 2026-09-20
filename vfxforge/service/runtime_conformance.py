@@ -10,7 +10,7 @@ from ..resources import godot_runtime_dir
 from ..schema import BILLBOARD_MODES, BLEND_MODES, COMMON_LAYER, LAYER_DEFAULTS, LAYER_TYPES
 
 
-RUNTIME_CONTRACT_VERSION = 5
+RUNTIME_CONTRACT_VERSION = 6
 
 PropertyTier = str  # implemented | emulated | inert_only | unsupported | host_bound
 
@@ -484,6 +484,23 @@ def validate_runtime_conformance(document: dict[str, Any]) -> list[dict[str, Any
                     ),
                     supported=sorted(PARTICLE_EMISSION_SHAPES),
                 )
+        if layer_type == "mesh_particle":
+            defaults = contract.get("property_defaults", {})
+            mesh_asset = str(properties.get("mesh_asset", defaults.get("mesh_asset", "")))
+            if mesh_asset:
+                for key in ("mesh", "size"):
+                    if key in properties and not _is_default_value(properties.get(key), defaults.get(key)):
+                        _append_property_error(
+                            errors,
+                            code="UNSUPPORTED_RUNTIME_PROPERTY",
+                            layer_id=layer_id,
+                            path=f"layers.{layer_id}.properties.{key}",
+                            message=(
+                                f"Layer '{layer_id}' property '{key}' is inactive when mesh_asset is set; "
+                                "runtime uses the imported mesh without primitive selector or size scaling."
+                            ),
+                            tier="conditional",
+                        )
         _validate_property_map(
             errors,
             layer_id=layer_id,

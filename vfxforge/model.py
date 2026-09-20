@@ -18,6 +18,8 @@ from .schema import COMMON_LAYER, LAYER_DEFAULTS, SCHEMA_VERSION, make_layer
 
 ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,63}$")
 EXPORT_PROVENANCE = "export"
+VFXFORGE_PROVENANCE_KEY = "vfxforge_provenance"
+RESERVED_METADATA_KEYS = frozenset({VFXFORGE_PROVENANCE_KEY})
 
 
 def is_stable_id(value: Any) -> bool:
@@ -107,6 +109,44 @@ def migrate_document(raw: Any) -> dict[str, Any]:
     return document
 
 
+def _reject_nonfinite_json_constant(value: str) -> Any:
+    lowered = value.lower()
+    if lowered in {"nan", "infinity", "-infinity", "+infinity"}:
+        raise ValueError(f"non-finite JSON constant '{value}' is not allowed")
+    return float(value)
+
+
+def parse_json_text(text: str) -> Any:
+    """Parse JSON text with strict finite-number semantics when supported."""
+    try:
+        return json.loads(text, parse_constant=_reject_nonfinite_json_constant)
+    except TypeError:
+        return json.loads(text)
+
+
+def collect_nonfinite_json_paths(value: Any, path: str = "") -> list[tuple[str, Any]]:
+    issues: list[tuple[str, Any]] = []
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            issues.append((path or "$", value))
+        return issues
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child = f"{path}.{key}" if path else str(key)
+            issues.extend(collect_nonfinite_json_paths(item, child))
+        return issues
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            child = f"{path}[{index}]"
+            issues.extend(collect_nonfinite_json_paths(item, child))
+    return issues
+
+
+def validate_json_safe(value: Any, *, path: str = "") -> list[tuple[str, Any]]:
+    """Return paths to non-finite numeric values anywhere in a JSON-like tree."""
+    return collect_nonfinite_json_paths(value, path)
+
+
 def read_document(path: str | Path) -> dict[str, Any]:
     document_path = Path(path)
     try:
@@ -114,13 +154,27 @@ def read_document(path: str | Path) -> dict[str, Any]:
     except OSError as exc:
         raise DocumentError(f"Could not read {document_path}: {exc}", "FILE_READ", str(document_path)) from exc
     try:
-        raw = json.loads(text)
+        raw = parse_json_text(text)
     except json.JSONDecodeError as exc:
         raise DocumentError(
             f"Invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}",
             "INVALID_JSON",
             str(document_path),
         ) from exc
+    except ValueError as exc:
+        raise DocumentError(
+            f"Invalid JSON numeric constant in {document_path}: {exc}",
+            "NON_FINITE_JSON",
+            str(document_path),
+        ) from exc
+    nonfinite = validate_json_safe(raw)
+    if nonfinite:
+        bad_path, bad_value = nonfinite[0]
+        raise DocumentError(
+            f"Non-finite JSON value at {bad_path}: {bad_value!r}",
+            "NON_FINITE_JSON",
+            str(document_path),
+        )
     try:
         return migrate_document(raw)
     except DocumentError:
@@ -152,14 +206,18 @@ def is_generated_effect_document(document: dict[str, Any]) -> bool:
     metadata = document.get("metadata", {})
     if not isinstance(metadata, dict):
         return False
-    return metadata.get("vfxforge_provenance") == EXPORT_PROVENANCE
+    return metadata.get(VFXFORGE_PROVENANCE_KEY) == EXPORT_PROVENANCE
 
 
 def stamp_export_provenance(document: dict[str, Any]) -> dict[str, Any]:
     stamped = deepcopy(document)
-    metadata = stamped.setdefault("metadata", {})
-    if isinstance(metadata, dict):
-        metadata["vfxforge_provenance"] = EXPORT_PROVENANCE
+    metadata = stamped.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    else:
+        metadata = dict(metadata)
+    metadata[VFXFORGE_PROVENANCE_KEY] = EXPORT_PROVENANCE
+    stamped["metadata"] = metadata
     return stamped
 
 
@@ -274,4 +332,8 @@ def clone_document(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def finite_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
