@@ -13,8 +13,8 @@ from .model import (
     VFXFORGE_PROVENANCE_KEY,
     coerce_float,
     finite_number,
-    is_generated_effect_document,
     is_stable_id,
+    is_trusted_generated_effect_document,
     numeric_gt,
     read_document,
     validate_json_safe,
@@ -469,10 +469,13 @@ def validate_document(
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     root = document if isinstance(document, dict) else {}
-    if document_role is None:
-        document_role = "generated" if is_generated_effect_document(root) else "source"
     project = Path(project_dir).resolve() if project_dir is not None else None
     resolved_document_path = Path(document_path).resolve() if document_path is not None else None
+    if document_role is None:
+        if resolved_document_path is not None and is_trusted_generated_effect_document(root, resolved_document_path):
+            document_role = "generated"
+        else:
+            document_role = "source"
     document_dir = resolved_document_path.parent if resolved_document_path is not None else project
 
     if strict and isinstance(root, dict):

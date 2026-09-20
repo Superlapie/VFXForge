@@ -209,6 +209,22 @@ def is_generated_effect_document(document: dict[str, Any]) -> bool:
     return metadata.get(VFXFORGE_PROVENANCE_KEY) == EXPORT_PROVENANCE
 
 
+def is_export_artifact_path(document_path: str | Path) -> bool:
+    """Return True when path points at an exported bundle canonical document."""
+    path = Path(document_path).resolve()
+    return path.name == "document.vfx.json" and (path.parent / "export_manifest.json").is_file()
+
+
+def is_trusted_generated_effect_document(
+    document: dict[str, Any],
+    document_path: str | Path | None = None,
+) -> bool:
+    """Generated status requires export provenance plus external artifact context."""
+    if document_path is None or not is_export_artifact_path(document_path):
+        return False
+    return is_generated_effect_document(document)
+
+
 def stamp_export_provenance(document: dict[str, Any]) -> dict[str, Any]:
     stamped = deepcopy(document)
     metadata = stamped.get("metadata")

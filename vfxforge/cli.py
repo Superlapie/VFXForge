@@ -212,7 +212,7 @@ def _assert_source_mutation_allowed(path: Path, unsafe_direct_edit: bool = False
 
 def _commit(path: Path, document: dict[str, Any], unsafe_direct_edit: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     _assert_source_mutation_allowed(path, unsafe_direct_edit)
-    validation = validate_document(document, path.parent)
+    validation = validate_document(document, path.parent, document_path=path, document_role="source")
     if not validation["valid"]:
         return validation, document
     write_document(path, document)
@@ -222,7 +222,7 @@ def _commit(path: Path, document: dict[str, Any], unsafe_direct_edit: bool = Fal
 def _single_validate(path: Path, budget: str | None = None) -> dict[str, Any]:
     try:
         document = read_document(path)
-        result = validate_document(document, path.parent, budget)
+        result = validate_document(document, path.parent, budget, document_path=path)
         return {"path": str(path), "document_id": document.get("id"), **result}
     except Exception as exc:
         return {"path": str(path), "valid": False, "errors": [_error(exc)], "warnings": [], "metrics": {}, "budget": {}}

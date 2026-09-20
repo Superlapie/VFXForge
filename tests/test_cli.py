@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vfxforge.cli import main
+from vfxforge.exporter import export_document
 from vfxforge.model import write_document
 from vfxforge.schema import default_document
 
@@ -104,6 +105,19 @@ class CLITests(unittest.TestCase):
             self.assertNotEqual(code, 0)
             self.assertFalse(result["success"])
             self.assertEqual(result["errors"][0]["code"], "INVALID_JSON")
+
+    def test_cli_validate_accepts_real_export_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = default_document("fireball", "Fireball", 1.0)
+            source_path = root / "fireball.vfx.json"
+            write_document(source_path, source)
+            generated_dir = root / "generated"
+            generated_dir.mkdir()
+            export_document(source, source_path, generated_dir, run_smoke_test=False)
+            code, result = run_cli("validate", str(generated_dir / "document.vfx.json"))
+            self.assertEqual(code, 0)
+            self.assertTrue(result["success"])
 
     def test_batch_validation_reports_individual_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

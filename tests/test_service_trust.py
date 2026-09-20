@@ -614,6 +614,16 @@ class RuntimeConformanceTests(unittest.TestCase):
         self.assertFalse(validation["valid"])
         self.assertIn("INVALID_PROPERTY_TYPE", {item["code"] for item in validation["errors"]})
 
+    def test_spoofed_provenance_on_ordinary_source_is_rejected(self) -> None:
+        document = default_document("spoof_probe", "Spoof Probe", 1.0)
+        document["metadata"] = {"vfxforge_provenance": "export"}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "spoof_probe.vfx.json"
+            write_document(path, document)
+            validation = validate_document(document, Path(tmp), document_path=path)
+        self.assertFalse(validation["valid"])
+        self.assertIn("RESERVED_METADATA_FIELD", {item["code"] for item in validation["errors"]})
+
     def test_invalid_metadata_object_is_rejected(self) -> None:
         document = default_document("metadata_probe", "Metadata Probe", 1.0)
         document["metadata"] = "legacy"
