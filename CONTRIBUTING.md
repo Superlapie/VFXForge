@@ -49,4 +49,4 @@ Be direct, be kind, and optimize for maintainability. Disagreement is fine; hara
 
 ## Questions
 
-Open a [Discussion](https://github.com/Superlapie/VFXForgeEnigma/discussions) for design questions, layer ideas, or integration help. Use [Issues](https://github.com/Superlapie/VFXForgeEnigma/issues) for reproducible bugs and feature requests.
+Open a [Discussion](https://github.com/Superlapie/VFXForge/discussions) for design questions, layer ideas, or integration help. Use [Issues](https://github.com/Superlapie/VFXForge/issues) for reproducible bugs and feature requests.

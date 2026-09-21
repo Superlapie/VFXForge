@@ -25,7 +25,7 @@ Related open tooling from the same ecosystem: [Icon Studio](https://github.com/S
 VFX Forge is intentionally open. I want this to become a **badass community-built tool**, not a private pipeline script.
 
 - **Good pull requests get reviewed.** See [CONTRIBUTING.md](CONTRIBUTING.md) for scope, quality gate expectations, and first-contribution ideas.
-- **Discussions are open** for layer design, integration questions, and roadmap ideas: [GitHub Discussions](https://github.com/Superlapie/VFXForgeEnigma/discussions).
+- **Discussions are open** for layer design, integration questions, and roadmap ideas: [GitHub Discussions](https://github.com/Superlapie/VFXForge/discussions).
 - **Issues welcome** for reproducible bugs and focused feature requests.
 
 If VFX Forge saves you time on your Godot project, a star, an example effect, or a docs fix helps others find it too.

@@ -81,7 +81,7 @@ Planned Enigma-owned integration:
 
 | Path | Purpose |
 |------|---------|
-| `scripts/vfxforge.sh` | Resolve sibling `VFXForgeEnigma`, run CLI |
+| `scripts/vfxforge.sh` | Resolve sibling `VFXForge`, run CLI |
 | `scripts/generate-vfx.sh` | Safe forge + install to `client/generated/vfx/` |
 | `scripts/verify-vfx.sh` | Import + headless catalog smoke |
 | `content/vfx/requests/` | Semantic request fixtures |
