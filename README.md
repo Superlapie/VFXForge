@@ -18,7 +18,7 @@ This tool was extracted from the content pipeline for **Enigma**, my Godot 3D MM
 
 The repo has **no runtime dependency** on the game itself: it ships as a standalone studio with its own CLI, schema, validation, GUI, and export pipeline. If you are building a Godot game with lots of real-time effects, you can adopt VFX Forge without touching Enigma.
 
-Related open tooling from the same ecosystem: [Icon Studio](https://github.com/Superlapie/IconStudioEnigma) for consistent inventory art, shop thumbnails, and UI imagery.
+Related open tooling from the same ecosystem: [Icon Forge](https://github.com/Superlapie/IconForge) for consistent inventory art, shop thumbnails, and UI imagery.
 
 ## Community project
 
